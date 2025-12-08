@@ -1,0 +1,16 @@
+# Homebrew Offline Configuration for Intel Mac
+export HOMEBREW_PREFIX="/usr/local"
+export HOMEBREW_REPOSITORY="/usr/local/Homebrew"
+
+# Use local Git repositories
+export HOMEBREW_BREW_GIT_REMOTE="file:///Volumes/Monterey/repos/homebrew"
+export HOMEBREW_CORE_GIT_REMOTE="file:///Volumes/Monterey/repos/homebrew-core"
+
+# Prevent internet access
+export HOMEBREW_NO_INSTALL_FROM_API=1
+export HOMEBREW_NO_AUTO_UPDATE=1
+export HOMEBREW_NO_ANALYTICS=1
+
+# Optional: Use local cache directory
+export HOMEBREW_CACHE="/Volumes/Monterey/homebrew-cache"
+

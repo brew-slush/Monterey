@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+# Set paths for Intel Mac
+export HOMEBREW_PREFIX="/usr/local"
+export HOMEBREW_REPOSITORY="/usr/local/Homebrew"
+
+sudo mkdir -p "${HOMEBREW_REPOSITORY}"
+sudo chown $(whoami):wheel "${HOMEBREW_REPOSITORY}"
+
+# Clone from your local repository
+git clone --depth=1 file:///Volumes/Monterey/repos/homebrew /usr/local/Homebrew
+
+# Create symlink
+ln -sf /usr/local/Homebrew/bin/brew /usr/local/bin/brew
+
+# Add to PATH (if not already there)
+echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+

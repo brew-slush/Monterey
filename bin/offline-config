@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+# Add to your shell profile (~/.zshrc or ~/.bash_profile)
+export HOMEBREW_BREW_GIT_REMOTE="file:///Volumes/Monterey/repos/homebrew"
+export HOMEBREW_CORE_GIT_REMOTE="file:///Volumes/Monterey/repos/homebrew-core"
+export HOMEBREW_NO_INSTALL_FROM_API=1
+export HOMEBREW_NO_AUTO_UPDATE=1
+export HOMEBREW_NO_ANALYTICS=1
+export HOMEBREW_NO_ANALYTICS=1
+export HOMEBREW_NO_INSTALL_CLEANUP=1
+export HOMEBREW_CACHE="/Volumes/Monterey/homebrew-cache"
+
+# Apply changes
+source ~/.zshrc
+

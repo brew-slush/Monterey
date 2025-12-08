@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# smb-monitor.sh — monitor SMB mount status, log changes
+
+MNT="/Volumes/Monterey"
+LOGDIR="$HOME/smb-monitor-logs"
+STATUS_FILE="$LOGDIR/$(basename "$MNT")-status.log"
+SYSLOG_FILE="$LOGDIR/$(basename "$MNT")-syslog.log"
+INTERVAL=30          # seconds between checks
+TAIL_LINES=100       # how many recent lines from system log to capture on change
+
+mkdir -p "$LOGDIR"
+
+# function: get status for mount (or empty if not mounted / inaccessible)
+get_status() {
+  smbutil statshares -m "$MNT" 2>/dev/null
+}
+
+# get simplified summary: version + signing + encryption + share type
+parse_summary() {
+  local txt="$1"
+  echo "$txt" | awk '
+    /^SMB_VERSION/ { v=$2 }
+    /^SIGNING_SUPPORTED/ { sign=$2 }
+    /^SMB_CURR_ENCRYPT_ALGORITHM/ { enc=$2 }
+    /^SMB_SHARE_TYPE/ { stype=$2 }
+    END {
+      printf "ver=%s signing=%s encrypt=%s share=%s\n", v, sign, enc, stype
+    }'
+}
+
+# initial status
+prev="$(get_status)"
+prev_sum="$(parse_summary "$prev")"
+echo "# $(date)  Initial status for $MNT" >> "$STATUS_FILE"
+echo "$prev" >> "$STATUS_FILE"
+echo "---" >> "$STATUS_FILE"
+
+while true; do
+  sleep $INTERVAL
+
+  current="$(get_status)"
+  if [ -z "$current" ]; then
+    echo "[$(date)] ERROR: mount check failed — statshares returned empty (mount missing or inaccessible)" | tee -a "$STATUS_FILE"
+    # optionally dump recent system log around the failure
+    echo "=== system.log around failure at $(date) ===" >> "$SYSLOG_FILE"
+    log show --style syslog --last 5m | tail -n $TAIL_LINES >> "$SYSLOG_FILE"
+    echo "---" >> "$SYSLOG_FILE"
+    prev_sum=""
+  else
+    cur_sum="$(parse_summary "$current")"
+    if [ "$cur_sum" != "$prev_sum" ]; then
+      echo "[$(date)] STATUS CHANGE for $MNT: $cur_sum" | tee -a "$STATUS_FILE"
+      echo "$current" >> "$STATUS_FILE"
+      echo "---" >> "$STATUS_FILE"
+
+      # capture some relevant kernel / smb logs
+      echo "=== system.log around change at $(date) ===" >> "$SYSLOG_FILE"
+      log show --style syslog --last 5m | tail -n $TAIL_LINES >> "$SYSLOG_FILE"
+      echo "---" >> "$SYSLOG_FILE"
+
+      prev_sum="$cur_sum"
+    fi
+  fi
+done
+

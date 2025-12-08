@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+# Create taps directory structure
+mkdir -p /usr/local/Homebrew/Library/Taps/homebrew
+
+# Clone homebrew-core from your share
+git clone --depth=1 file:///Volumes/Monterey/repos/homebrew-core \
+  /usr/local/Homebrew/Library/Taps/homebrew/homebrew-core
+
+# Verify tap is recognized
+brew tap
+

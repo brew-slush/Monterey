@@ -1,0 +1,12 @@
+# Verify Homebrew installation
+brew --version
+
+# Check that it's using local resources
+brew config | grep -E "HOMEBREW_BREW_GIT_REMOTE|HOMEBREW_CORE_GIT_REMOTE"
+
+# Prevent CLT installation attempts by creating marker file
+sudo touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+
+# Verify system is ready (should show existing CLT)
+brew doctor
+
