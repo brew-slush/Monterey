@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+
+MOUNT_DIR="${MOUNT_DIR:-/Volumes/Monterey}"
+
+INSTALLED="$(brew list --formula)"
+TMP_FILE="$(mktemp /tmp/built_bottles.XXXXXX)"
+
+# cache_bottle_verify: copy a bottle (and manifest, if present) into Homebrew cache,
+# naming it properly so brew install will reuse it. Then optionally verify via sha256.
+
+# Usage:
+#   cache_bottle_verify /path/to/foo-1.2.3.<tag>.bottle.tar.gz
+# Optionally, pass a manifest file with same base name but .bottle_manifest.json
+# Example:
+#   cache_bottle_verify ./foo-1.2.3.monterey.bottle.tar.gz
+
+cache_bottle_verify() {
+	src_bottle="${1}"
+	if [[ -z ${src_bottle} ]]; then
+		echo "Usage: ${0} /path/to/<formula>-<ver>.<tag>.bottle.tar.gz"
+		return 1
+	fi
+
+	if [[ ! -f ${src_bottle} ]]; then
+		echo "ERROR: Bottle file '${src_bottle}' not found"
+		return 1
+	fi
+
+	# Derive formula name from the filename to pass to brew --cache
+	filename=$(basename "${src_bottle}")
+	# brew --cache --force-bottle (or --build-from-source) will show canonical cache path
+	dst="$(brew --cache --force-bottle "${filename}" 2>/dev/null)"
+
+	if [[ ! ${dst} ]]; then
+		echo "ERROR: brew did not output a cache path. Check formula name/version/tag in filename."
+		return 2
+	fi
+
+	# Ensure cache directory exists
+	dst_dir=$(dirname "${dst}")
+	mkdir -p "${dst_dir}"
+
+	# Copy the bottle to cache
+	if ! cp "${src_bottle}" "${dst}"; then
+		echo "ERROR: Failed to copy bottle to '${dst}'"
+		return 3
+	fi
+	echo "Copied bottle to cache:  ${dst}"
+
+	# If there is a manifest (JSON) file alongside the bottle, copy it too.
+	manifest_src="${src_bottle%.tar.gz}.bottle_manifest.json"
+	if [[ -f ${manifest_src} ]]; then
+		dst_manifest="${dst%.tar.gz}.bottle_manifest.json"
+		if cp "${manifest_src}" "${dst_manifest}"; then
+			echo "Copied bottle manifest to cache:  ${dst_manifest}"
+		else
+			echo "WARNING: failed to copy manifest"
+		fi
+	fi
+
+	# Optional: verify checksum using sha256sum / shasum (macOS variant) if available
+	if command -v shasum >/dev/null 2>&1; then
+		echo "Verifying sha256 checksum..."
+		(cd "${dst_dir}" && shasum -a 256 "$(basename "${dst}")")
+		echo "Done. If this matches expected value from source/manifest, bottle is valid."
+	else
+		echo "Note: 'shasum' not found — skipping checksum verification."
+	fi
+
+	echo "You may now transfer or reuse this cache directory (or set HOMEBREW_CACHE accordingly) on another machine."
+}
+
+# shellcheck disable=SC2086
+brew info --json=v1 ${INSTALLED} 2>/dev/null >"${TMP_FILE}"
+BUILT="$(jq -r '.[] | select(.installed[-1].poured_from_bottle == false) | .name' "${TMP_FILE}")"
+echo "\${BUILT} = ${BUILT}"
+
+# Determine architecture-specific cache directory
+ARCH=$(uname -m)
+if [[ ${ARCH} == "x86_64" ]]; then
+	CACHE_DIR="${MOUNT_DIR}/cache/Intel/homebrew-cache"
+elif [[ ${ARCH} == "arm64" ]]; then
+	CACHE_DIR="${MOUNT_DIR}/cache/ARM/homebrew-cache"
+else
+	echo "ERROR: Unknown architecture ${ARCH}"
+	exit 1
+fi
+
+mkdir -p "${CACHE_DIR}"
+
+for formula in ${BUILT}; do
+	echo "=========================================="
+	echo "Processing ${formula}..."
+	echo "=========================================="
+
+	# Reinstall the formula with bottle build flags
+	echo "Rebuilding bottle for ${formula}..."
+	if ! brew install --build-bottle "${formula}"; then
+		echo "WARNING: Failed to install ${formula} with --build-bottle, skipping..."
+		continue
+	fi
+
+	# Create the bottle
+	echo "Creating bottle for ${formula}..."
+	bottle_output=$(brew bottle --json "${formula}" 2>&1)
+	if [[ $? -ne 0 ]]; then
+		echo "WARNING: Failed to create bottle for ${formula}, skipping..."
+		continue
+	fi
+
+	echo "${bottle_output}"
+
+	# Extract bottle filename from output (format: ./formula--version.tag.bottle.tar.gz)
+	bottle_file=$(echo "${bottle_output}" | grep -oE '\./[^[:space:]]+\.bottle\.tar\.gz' | head -n 1)
+
+	if [[ -z ${bottle_file} ]] || [[ ! -f ${bottle_file} ]]; then
+		echo "WARNING: Could not find bottle file for ${formula}"
+		continue
+	fi
+
+	echo "Found bottle: ${bottle_file}"
+
+	# Check for manifest file
+	manifest_file="${bottle_file%.tar.gz}.bottle_manifest.json"
+
+	# Move bottle to cache using the helper function
+	echo "Caching bottle for ${formula}..."
+	if cache_bottle_verify "${bottle_file}"; then
+		echo "Successfully cached ${formula}"
+
+		# Clean up the local bottle file after successful caching
+		rm -f "${bottle_file}"
+		[[ -f ${manifest_file} ]] && rm -f "${manifest_file}"
+
+		# Also copy to our persistent cache directory for backup
+		bottle_basename=$(basename "${bottle_file}")
+		cp "$(brew --cache --force-bottle "${bottle_basename}")" "${CACHE_DIR}/" 2>/dev/null
+
+		if [[ -f "$(brew --cache --force-bottle "${bottle_basename}")".bottle_manifest.json ]]; then
+			cp "$(brew --cache --force-bottle "${bottle_basename}")".bottle_manifest.json "${CACHE_DIR}/" 2>/dev/null
+		fi
+
+		echo "Backed up to ${CACHE_DIR}/${bottle_basename}"
+	else
+		echo "ERROR: Failed to cache bottle for ${formula}"
+	fi
+
+	echo ""
+done
+
+# Clean up temp file
+rm -f "${TMP_FILE}"
+
+echo "=========================================="
+echo "Bottle caching complete!"
+echo "Cached bottles are stored in:"
+echo "  - Homebrew cache: $(brew --cache)"
+echo "  - Backup location: ${CACHE_DIR}"
+echo "=========================================="

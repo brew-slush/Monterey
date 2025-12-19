@@ -5,8 +5,18 @@ mkdir -p /usr/local/Homebrew/Library/Taps/homebrew
 
 # Clone homebrew-core from your share
 git clone --depth=1 file:///Volumes/Monterey/repos/homebrew-core \
-  /usr/local/Homebrew/Library/Taps/homebrew/homebrew-core
+	/usr/local/Homebrew/Library/Taps/homebrew/homebrew-core
+cd /usr/local/Homebrew/Library/Taps/homebrew/homebrew-core || exit
+git config advice.detachedHead false
+cd || exit
 
 # Verify tap is recognized
 brew tap
 
+git clone file:///Volumes/Monterey/repos/homebrew-cask \
+	/usr/local/Homebrew/Library/Taps/homebrew/homebrew-cask
+cd /usr/local/Homebrew/Library/Taps/homebrew/homebrew-cask || exit
+git config advice.detachedHead false
+cd || exit
+
+brew doctor

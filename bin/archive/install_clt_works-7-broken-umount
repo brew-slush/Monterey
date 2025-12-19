@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+
+set -e
+
+# === FUNCTIONS ===
+cleanup() {
+    if [ "${MOUNTED_IN_SCRIPT:-false}" = "true" ] && [ -n "${MOUNT_PATH:-}" ]; then
+        echo "  Cleaning up mount: $MOUNT_PATH" >&2
+        hdiutil detach "$MOUNT_PATH" 2>/dev/null || true
+    fi
+    sudo rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress 2>/dev/null || true
+}
+
+kill_installer_and_tail() {
+    if [ -n "${TAIL_PID:-}" ]; then
+        kill $TAIL_PID 2>/dev/null || true
+        wait $TAIL_PID 2>/dev/null || true
+    fi
+    if [ -n "${INSTALLER_PID:-}" ]; then
+        sudo kill $INSTALLER_PID 2>/dev/null || true
+        wait $INSTALLER_PID 2>/dev/null || true
+    fi
+}
+
+handle_interrupt() {
+    echo ""
+    echo "  Caught Ctrl-C, stopping..."
+    kill_installer_and_tail
+    cleanup
+    
+    # Reset terminal
+    printf "\033[?25h\033[?7h\033[r" >&2
+    exit 130
+}
+
+is_installed() {
+    pkgutil --pkg-info com.apple.pkg.CLTools_Executables &>/dev/null || \
+    [ -e "/Library/Developer/CommandLineTools/usr/bin/clang" ]
+}
+
+# === MOUNT LOGIC (shared between both modes) ===
+mount_dmg() {
+    local dmg_path="$1"
+    local mount_point="$2"
+    
+    # Clean up any existing mounts first (with verification)
+    echo "  • Checking for existing mounts..."
+    EXISTING_MOUNTS=$(hdiutil info | grep -B 5 "$dmg_path" | grep '^/Volumes/' | awk '{print $NF}' || true)
+    
+    if [ -n "$EXISTING_MOUNTS" ]; then
+        echo "  • Unmounting existing mounts..."
+        echo "$EXISTING_MOUNTS" | while IFS= read -r mount_point; do
+            if [ -n "$mount_point" ]; then
+                echo "    - $mount_point"
+                hdiutil detach "$mount_point" 2>/dev/null || true
+            fi
+        done
+        
+        # Wait for actual unmount completion (verify no mount points exist)
+        echo "  • Waiting for unmount to complete..."
+        for i in {1..5}; do
+            if ! hdiutil info | grep -q "^/Volumes/.*$dmg_path"; then
+                echo "  ✓ Unmount confirmed"
+                break
+            fi
+            sleep 1
+        done
+    fi
+    
+    # Attempt mount with retries
+    echo "  • Mounting DMG..."
+    if hdiutil mount -readonly -quiet -nobrowse -mountpoint "$mount_point" "$dmg_path"; then
+        MOUNTED_IN_SCRIPT=true
+        return 0
+    fi
+    
+    echo "  ⚠ First mount attempt failed, trying standard attach..."
+    MOUNT_OUTPUT=$(hdiutil attach -nobrowse "$dmg_path" 2>&1)
+    
+    if [ $? -eq 0 ]; then
+        MOUNT_PATH=$(echo "$MOUNT_OUTPUT" | grep '/Volumes/' | awk '{print $NF}' | tail -n1)
+        MOUNTED_IN_SCRIPT=true
+        return 0
+    fi
+    
+    return 1
+}
+
+# === MAIN ===
+main() {
+    # === SETUP PHASE ===
+    clear
+    
+    # Print header
+    cat << 'EOF'
+═══════════════════════════════════════════════════════════════
+              Command Line Tools Installation
+═══════════════════════════════════════════════════════════════
+
+EOF
+    
+    # Architecture detection
+    ARCH=$(uname -m)
+    PROC=$([[ "$ARCH" == "arm64" ]] && echo "ARM" || echo "Intel")
+    echo "Architecture: $ARCH, Processor: $PROC"
+    
+    # === ARGUMENT HANDLING ===
+    DMG_PATH=""
+    USE_PROGRESS=true
+    
+    if [ "${1:-}" = "--no-progress" ]; then
+        USE_PROGRESS=false
+    elif [ -n "${1:-}" ]; then
+        DMG_PATH="$1"
+    fi
+    
+    # Default DMG path handling
+    if [ -z "$DMG_PATH" ]; then
+        SCRIPT_DIR="$( cd "$( dirname "$0" )" && pwd )"
+        MOUNT="$( cd "${SCRIPT_DIR}/.." && pwd )"
+        DMG_PATH=$(find "${MOUNT}/software/${PROC}" -name "Command_Line_Tools_*.dmg" -type f | head -n1)
+    fi
+    
+    echo "Using DMG: $DMG_PATH"
+    
+    # Validate DMG
+    if [ ! -f "$DMG_PATH" ]; then 
+        echo "✗ Error: DMG not found at $DMG_PATH" >&2
+        exit 1
+    fi
+    
+    if [ ! -r "$DMG_PATH" ]; then
+        echo "✗ Error: DMG not readable" >&2
+        ls -la "$DMG_PATH" >&2
+        exit 1
+    fi
+
+    # Check if already installed
+    if is_installed; then
+        echo "✓ Command Line Tools already installed."
+        if path=$(xcode-select --print-path 2>/dev/null); then
+            echo "  Path: $path"
+        fi
+        exit 0
+    fi
+
+    # Set up Ctrl-C trap
+    trap handle_interrupt SIGINT
+
+    # === MOUNT DMG (shared logic) ===
+    MOUNT_PATH="/Volumes/CLT_$$"
+    if ! mount_dmg "$DMG_PATH" "$MOUNT_PATH"; then
+        echo "  ✗ ERROR: Failed to mount DMG" >&2
+        exit 1
+    fi
+    
+    # Find package
+    PKG_PATH=$(find "$MOUNT_PATH" -maxdepth 1 -name "*.pkg" -type f | head -n1)
+    if [ -z "$PKG_PATH" ]; then
+        echo "  ✗ ERROR: No .pkg file found in $MOUNT_PATH" >&2
+        hdiutil detach "$MOUNT_PATH" 2>/dev/null || true
+        exit 1
+    fi
+
+    # === SIMPLE MODE ===
+    if [ "$USE_PROGRESS" = false ]; then
+        echo ""
+        echo "Running in simple mode..."
+        
+        # Create progress file
+        echo "  • Creating progress indicator file..."
+        touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+        
+        # Run installer
+        echo "  • Running installer..."
+        sudo installer -pkg "$PKG_PATH" -target / -verboseR
+        
+        # Clean up
+        hdiutil detach "$MOUNT_PATH" 2>/dev/null || true
+        rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+        
+        # Verify
+        if is_installed; then
+            echo "  ✓ Command Line Tools installed successfully!"
+        else
+            echo "  ✗ Installation failed" >&2
+            exit 1
+        fi
+        
+        exit 0
+    fi
+
+    # === PROGRESS MODE ===
+    echo "✓ Command Line Tools not detected. Proceeding with installation..."
+    echo ""
+    
+    # Create progress file
+    echo "  • Creating progress indicator file..."
+    sudo touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+    
+    echo "  • Installing: $(basename "$PKG_PATH")"
+    echo "  • Log file: $LOG_FILE"
+    echo ""
+    
+    # Get terminal dimensions
+    TOTAL_LINES=$(tput lines 2>/dev/null || echo 25)
+    WINDOW_START_LINE=12
+    WINDOW_HEIGHT=$((TOTAL_LINES - WINDOW_START_LINE))
+    CONTENT_HEIGHT=$((WINDOW_HEIGHT - 5))
+    
+    # Set scrolling region
+    printf "\033[${WINDOW_START_LINE};${TOTAL_LINES}r"
+    
+    # Print static header
+    printf "\033[${WINDOW_START_LINE};0H"
+    cat << EOF
+═══════════════════════════════════════════════════════════════
+              LIVE INSTALLATION PROGRESS
+═══════════════════════════════════════════════════════════════
+EOF
+    
+    # Start installer
+    sudo installer -pkg "$PKG_PATH" -target / -verboseR > "$LOG_FILE" 2>&1 &
+    INSTALLER_PID=$!
+    
+    # Tail process
+    {
+        sleep 2
+        
+        display_content() {
+            printf "\033[$((WINDOW_START_LINE + 3));0H\033[J"
+            
+            if [ -f "$LOG_FILE" ]; then
+                tail -n $CONTENT_HEIGHT "$LOG_FILE" 2>/dev/null || echo "Waiting..."
+            else
+                echo "Waiting for installer to start..."
+            fi
+            
+            printf "\033[$((TOTAL_LINES - 2));0H"
+            echo "───────────────────────────────────────────────────────────────"
+            printf "\033[$((TOTAL_LINES - 1));0H"
+            echo " PID: $INSTALLER_PID | Press Ctrl+C to cancel"
+        }
+        
+        display_content
+        
+        LAST_LINE_COUNT=0
+        
+        while kill -0 "$INSTALLER_PID" 2>/dev/null; do
+            if [ -f "$LOG_FILE" ]; then
+                CURRENT_LINE_COUNT=$(wc -l < "$LOG_FILE")
+                
+                if [ $CURRENT_LINE_COUNT -gt $LAST_LINE_COUNT ]; then
+                    display_content
+                    LAST_LINE_COUNT=$CURRENT_LINE_COUNT
+                fi
+            fi
+            
+            sleep 0.5
+        done
+        
+        display_content
+        
+    } &
+    
+    TAIL_PID=$!
+    
+    # Wait for installer
+    wait "$INSTALLER_PID"
+    INSTALL_RESULT=$?
+    
+    # Reset scrolling region
+    printf "\033[r"
+    
+    # Clean up tail
+    kill "$TAIL_PID" 2>/dev/null
+    wait "$TAIL_PID" 2>/dev/null
+    
+    # Clear and show final status
+    printf "\033[2J\033[H"
+    
+    if [ $INSTALL_RESULT -ne 0 ]; then
+        echo "✗ ERROR: Installer failed" >&2
+        exit 1
+    fi
+    
+    # Verify
+    if is_installed; then
+        echo "✅ Command Line Tools installed successfully!"
+        if path=$(xcode-select --print-path 2>/dev/null); then
+            echo "Path: $path"
+        fi
+    else
+        echo "❌ Verification failed" >&2
+        exit 1
+    fi
+    
+    echo "Full log: $LOG_FILE"
+}
+
+# Execute main with cleanup trap
+trap cleanup EXIT
+main "$@"
+

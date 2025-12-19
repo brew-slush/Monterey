@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+CAST_FREEZE=5fa601d38701d601e33f9c305a047a3ca8078810
+
+
+# First Sept 1st commit
+LAST_COMMIT=b5b2c1f838a8ea365c859e7bf53ed0745225733b
+git clone https://github.com/Homebrew/homebrew-core.git
+git checkout ${LAST_COMMIT}
+
+# No more updates
+git remote set-url origin file:///dev/null
+
+# Make repository bare, reverse it to shift the detached head (freeze line)
+# All operations break on repository: no changes possible like this
+git config --bool core.bare true
+
+# make repos into its own dataset and readonly
+# mv repos fepos
+# sudo zfs create tank/export/Monterey/repos
+# mv fepos/* repos
+# sudo zfs set readonly=on tank/export/Monterey/repos
+

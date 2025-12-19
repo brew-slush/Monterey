@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Uninstalling Command Line Tools ==="
+
+if pkgutil --pkg-info com.apple.pkg.CLTools_Executables >/dev/null 2>&1; then
+  echo "  • Removing /Library/Developer/CommandLineTools"
+  sudo rm -rf /Library/Developer/CommandLineTools
+else
+  echo "  • Command Line Tools receipt not found; removing directory anyway"
+  sudo rm -rf /Library/Developer/CommandLineTools
+fi
+
+echo "  • Removing pkg receipts"
+sudo rm -f /var/db/receipts/com.apple.pkg.CLTools_Executables.bom \
+            /var/db/receipts/com.apple.pkg.CLTools_Executables.plist
+sudo pkgutil --forget com.apple.pkg.CLTools_Executables >/dev/null 2>&1 || true
+
+echo "  • Resetting xcode-select"
+sudo xcode-select --reset >/dev/null 2>&1 || true
+
+echo "  • Verifying removal"
+if pkgutil --pkg-info com.apple.pkg.CLTools_Executables >/dev/null 2>&1; then
+  echo "  ⚠ Receipt still present (com.apple.pkg.CLTools_Executables); install should still proceed because files are removed" >&2
+fi
+
+if xcode-select --print-path >/dev/null 2>&1; then
+  echo "  ✗ Developer directory still set: $(xcode-select --print-path)" >&2
+  exit 1
+fi
+
+echo "  ✓ Command Line Tools uninstalled"

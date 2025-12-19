@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+
+START_TIME=$(date +%s)
+
+MOUNT_DIR="${MOUNT_DIR:-/Volumes/Monterey}"
+
+export HOMEBREW_NO_ENV_HINTS=1
+
+# Get the freeze commit from homebrew-core repo
+HOMEBREW_CORE_DIR="${MOUNT_DIR}/repos/homebrew-core"
+if [[ ! -d ${HOMEBREW_CORE_DIR} ]]; then
+	echo "ERROR: Homebrew core repository not found at ${HOMEBREW_CORE_DIR}"
+	exit 1
+fi
+
+FREEZE_COMMIT=$(cd "${HOMEBREW_CORE_DIR}" && git rev-parse --short HEAD 2>/dev/null)
+if [[ -z ${FREEZE_COMMIT} ]]; then
+	echo "ERROR: Could not determine freeze commit from ${HOMEBREW_CORE_DIR}"
+	exit 1
+fi
+
+ALL_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_all"
+CACHE_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_deps"
+
+# Check if _all index exists
+if [[ ! -f ${ALL_FILE} ]]; then
+	echo "ERROR: All formulae index not found at ${ALL_FILE}"
+	echo "Please run: brew formulae > ${ALL_FILE}"
+	exit 1
+fi
+
+# Check if cache file exists
+if [[ ! -f ${CACHE_FILE} ]]; then
+	echo "Generating dependencies index for commit ${FREEZE_COMMIT}"
+	echo "(This is a one-time operation per freeze commit)"
+	echo "This may take several minutes..."
+
+	# Create temporary file
+	TMP_CACHE=$(mktemp)
+	echo "Writing results to: ${TMP_CACHE}"
+	echo "You can monitor progress with: tail -f ${TMP_CACHE}"
+	echo ""
+
+	# Get dependencies for each formula in parallel
+	# shellcheck disable=SC2016
+	(
+		echo "# fields: formula,dependencies"
+		cat "${ALL_FILE}" |
+			xargs -P 16 -I % sh -c 'deps=$(brew deps --formula --include-build "%" 2>/dev/null | tr "\n" "," | sed "s/,$//"); if [ -n "$deps" ]; then echo "%,$deps"; else echo "%"; fi'
+	) >"${TMP_CACHE}"
+
+	echo ""
+	echo "Sorting results..."
+	sort -o "${TMP_CACHE}" "${TMP_CACHE}"
+
+	# Move to final location
+	mv "${TMP_CACHE}" "${CACHE_FILE}"
+
+	echo "Cache generated at ${CACHE_FILE}"
+	echo "Indexed $(wc -l <"${CACHE_FILE}") formulae with their dependencies"
+else
+	echo "Using cached dependencies index for commit ${FREEZE_COMMIT}"
+	echo "Cache file: ${CACHE_FILE}"
+fi
+
+# Calculate and display elapsed time
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
+echo ""
+echo "Total time: ${ELAPSED} seconds"

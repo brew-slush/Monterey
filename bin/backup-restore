@@ -1,0 +1,586 @@
+#!/bin/bash
+#
+# Homebrew Backup & Restore (macOS Monterey)
+# -----------------------------------------
+#
+# DEFAULT (no args):
+#   Verify / inventory only (dry-run)
+#
+# --backup:
+#   Capture full Homebrew backup (cache excluded)
+#
+# --backup --clean:
+#   Capture backup, then REMOVE Homebrew using:
+#     • Homebrew's official uninstall script
+#     • Safe removal of known Homebrew-only leftovers
+#
+# --clean-only:
+#   Remove Homebrew and leftovers without creating a new backup tarball
+#   (requires --source pointing to an existing backup)
+#
+# --restore [--source DIR]:
+#   Verify restore (no changes). Defaults to the most recent backup under
+#   ~/homebrew-backup-restore unless --source is provided.
+#
+# --restore --apply:
+#   Apply restore
+#
+# GUARANTEES:
+#   • Cache is never archived or restored
+#   • No blind deletion of /usr/local/*
+#   • Homebrew owns its own unlinking
+#
+
+set -euo pipefail
+
+MODE="verify"
+APPLY="no"
+CLEAN="no"
+SOURCE_DIR=""
+START_EPOCH="$(date +%s)"
+
+usage() {
+  cat <<EOF
+Usage: backup-restore [--backup|--restore] [--apply] [--clean] [--source DIR]
+
+  No args      Verify/inventory current system (dry-run)
+  --backup     Capture full Homebrew backup (cache excluded)
+  --backup --clean
+               Backup, then uninstall and remove Homebrew leftovers
+  --clean-only Remove Homebrew and leftovers without creating a backup (requires --source)
+  --restore    Verify restore from an existing backup (does not apply changes)
+  --restore --apply
+               Apply restore from an existing backup
+  --source DIR Use the specified backup directory instead of auto-selecting
+               the most recent backup under ${HOME}/homebrew-backup-restore
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --backup) MODE="backup" ;;
+    --restore) MODE="restore" ;;
+    --apply) APPLY="yes" ;;
+    --clean) CLEAN="yes" ;;
+    --clean-only) MODE="clean"; CLEAN="yes" ;;
+    --source)
+      shift
+      SOURCE_DIR="${1:-}"
+      if [[ -z "${SOURCE_DIR}" ]]; then
+        echo "ERROR: --source requires a directory path" >&2
+        usage
+        exit 1
+      fi
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR: Unknown argument: $1" >&2
+      usage
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+if [[ "${CLEAN}" == "yes" && "${MODE}" != "backup" && "${MODE}" != "clean" ]]; then
+  echo "ERROR: --clean is only valid with --backup or --clean-only" >&2
+  exit 1
+fi
+
+if [[ "${MODE}" == "clean" && -z "${SOURCE_DIR}" ]]; then
+  echo "ERROR: --clean-only requires --source <existing backup directory or archive>" >&2
+  exit 1
+fi
+
+if [[ "${APPLY}" == "yes" && "${MODE}" != "restore" ]]; then
+  echo "ERROR: --apply is only valid with --restore" >&2
+  exit 1
+fi
+
+OUTROOT="${HOME}/homebrew-backup-restore"
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+RUNDIR="${OUTROOT}/${TS}"
+
+mkdir -p "${RUNDIR}"
+
+MANIFEST="${RUNDIR}/manifest.txt"
+SUMMARY="${RUNDIR}/summary.txt"
+ARCHIVE="${RUNDIR}/homebrew-backup.tgz"
+FILELIST="${RUNDIR}/manifest.paths"
+BUNDLE="${RUNDIR}/Brewfile"
+CLEANLIST="${RUNDIR}/manifest.clean.paths"
+BUNDLE="${RUNDIR}/Brewfile"
+
+if [[ "${MODE}" == "restore" || "${MODE}" == "clean" ]]; then
+  if [[ -n "${SOURCE_DIR}" && -f "${SOURCE_DIR}" && "${SOURCE_DIR##*/}" == "homebrew-backup.tgz" ]]; then
+    SOURCE_DIR="$(dirname "${SOURCE_DIR}")"
+  fi
+
+  if [[ "${MODE}" == "restore" && -z "${SOURCE_DIR}" ]]; then
+    latest_archive="$(ls -1dt "${OUTROOT}"/[0-9T]*/homebrew-backup.tgz 2>/dev/null | head -1 || true)"
+    if [[ -n "${latest_archive}" ]]; then
+      SOURCE_DIR="$(cd "$(dirname "${latest_archive}")" && pwd)"
+    fi
+  fi
+
+  if [[ -z "${SOURCE_DIR}" || ! -d "${SOURCE_DIR}" ]]; then
+    echo "ERROR: No backup found. Provide --source <backup directory> or ensure a backup exists under ${OUTROOT}" >&2
+    exit 1
+  fi
+
+  SOURCE_DIR="$(cd "${SOURCE_DIR}" && pwd)"
+
+  MANIFEST="${SOURCE_DIR}/manifest.txt"
+  ARCHIVE="${SOURCE_DIR}/homebrew-backup.tgz"
+  BUNDLE="${SOURCE_DIR}/Brewfile"
+  CLEANLIST="${RUNDIR}/manifest.clean.paths"
+
+  if [[ ! -f "${ARCHIVE}" ]]; then
+    echo "ERROR: Archive not found at ${ARCHIVE}" >&2
+    exit 1
+  fi
+
+  if [[ "${MODE}" == "restore" && ! -f "${MANIFEST}" ]]; then
+    echo "ERROR: Manifest not found at ${MANIFEST}" >&2
+    exit 1
+  fi
+
+  if [[ "${MODE}" == "clean" && ! -f "${MANIFEST}" ]]; then
+    echo "ERROR: Manifest not found at ${MANIFEST} (required to use --clean-only)" >&2
+    exit 1
+  fi
+fi
+
+exec > >(tee "${SUMMARY}") 2>&1
+
+echo "=== Homebrew Backup & Restore ==="
+echo "Mode      : ${MODE}"
+echo "Clean     : ${CLEAN}"
+echo "Apply     : ${APPLY}"
+[[ "${MODE}" == "restore" || "${MODE}" == "clean" ]] && echo "Source    : ${SOURCE_DIR}"
+echo "Timestamp : ${TS}"
+echo "Host      : $(hostname)"
+echo "macOS     : $(sw_vers -productVersion)"
+echo "User      : $(whoami)"
+echo
+
+# --------------------------------------------------------------------
+# Homebrew discovery
+# --------------------------------------------------------------------
+
+BREW_BIN=""
+BREW_PREFIX=""
+BREW_REPO=""
+BREW_CELLAR=""
+
+if command -v brew >/dev/null 2>&1; then
+  BREW_BIN="$(command -v brew)"
+  BREW_PREFIX="$("${BREW_BIN}" --prefix 2>/dev/null || true)"
+  BREW_REPO="$("${BREW_BIN}" --repository 2>/dev/null || true)"
+  BREW_CELLAR="$("${BREW_BIN}" --cellar 2>/dev/null || true)"
+fi
+
+if [[ -z "${BREW_BIN}" ]]; then
+  for candidate in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    if [[ -x "${candidate}" ]]; then
+      BREW_BIN="${candidate}"
+      [[ -z "${BREW_PREFIX}" ]] && BREW_PREFIX="$("${BREW_BIN}" --prefix 2>/dev/null || true)"
+      [[ -z "${BREW_REPO}" ]] && BREW_REPO="$("${BREW_BIN}" --repository 2>/dev/null || true)"
+      [[ -z "${BREW_CELLAR}" ]] && BREW_CELLAR="$("${BREW_BIN}" --cellar 2>/dev/null || true)"
+      break
+    fi
+  done
+fi
+
+if [[ -z "${BREW_PREFIX}" ]]; then
+  for candidate in /opt/homebrew /usr/local; do
+    if [[ -d "${candidate}/Cellar" || -d "${candidate}/Homebrew" ]]; then
+      BREW_PREFIX="${candidate}"
+      break
+    fi
+  done
+fi
+
+BREW_PREFIX="${BREW_PREFIX:-/usr/local}"
+BREW_REPO="${BREW_REPO:-${BREW_PREFIX}/Homebrew}"
+BREW_CELLAR="${BREW_CELLAR:-${BREW_PREFIX}/Cellar}"
+
+echo "[+] Discovered Homebrew context"
+printf "  brew binary : %s\n" "${BREW_BIN:-<not found>}"
+printf "  prefix      : %s\n" "${BREW_PREFIX}"
+printf "  repository  : %s\n" "${BREW_REPO}"
+printf "  cellar      : %s\n" "${BREW_CELLAR}"
+[[ -z "${BREW_BIN}" ]] && echo "  NOTE: brew not found in PATH; using detected paths only"
+echo
+
+# --------------------------------------------------------------------
+# Paranoid path set (CACHE EXCLUDED)
+# --------------------------------------------------------------------
+
+PATHS=(
+  "${BREW_REPO}"
+  "${BREW_CELLAR}"
+  "${BREW_PREFIX}/Caskroom"
+
+  "${BREW_PREFIX}/bin"
+  "${BREW_PREFIX}/sbin"
+  "${BREW_PREFIX}/lib"
+  "${BREW_PREFIX}/include"
+  "${BREW_PREFIX}/share"
+  "${BREW_PREFIX}/opt"
+  "${BREW_PREFIX}/etc"
+  "${BREW_PREFIX}/Frameworks"
+  "${BREW_PREFIX}/var"
+
+  "/var/homebrew"
+  "/var/log/homebrew"
+  "/var/run/homebrew"
+
+  "${HOME}/Library/LaunchAgents"
+  "/Library/LaunchDaemons"
+
+  "${HOME}/.config/homebrew"
+  "${HOME}/.brewconfig"
+  "${HOME}/.Brewfile"
+)
+
+# --------------------------------------------------------------------
+# Manifest
+# --------------------------------------------------------------------
+
+if [[ "${MODE}" != "restore" && "${MODE}" != "clean" ]]; then
+  echo "[+] Generating manifest"
+  MANIFEST_TMP="$(mktemp)"
+
+  if [[ -n "${BREW_BIN}" ]]; then
+    echo "  Using brew inventory"
+
+    [[ -x "${BREW_BIN}" ]] && printf "%s\n" "${BREW_BIN}" >> "${MANIFEST_TMP}"
+
+    for p in "${BREW_REPO}" "${BREW_CELLAR}" "${BREW_PREFIX}/Caskroom"; do
+      if [[ -e "${p}" ]]; then
+        echo "    repo path: ${p}"
+        sudo find "${p}" -xdev -print >> "${MANIFEST_TMP}"
+      fi
+    done
+
+    for p in "${BREW_PREFIX}/opt" "${BREW_PREFIX}/etc" "${BREW_PREFIX}/var"; do
+      [[ -e "${p}" ]] && sudo find "${p}" -xdev -print >> "${MANIFEST_TMP}"
+    done
+
+    for p in /var/homebrew /var/log/homebrew /var/run/homebrew; do
+      [[ -e "${p}" ]] && sudo find "${p}" -xdev -print >> "${MANIFEST_TMP}"
+    done
+
+    for p in "${HOME}/Library/LaunchAgents" "/Library/LaunchDaemons"; do
+      [[ -d "${p}" ]] && sudo find "${p}" -maxdepth 1 -type f -iname 'homebrew*.plist' -print >> "${MANIFEST_TMP}"
+    done
+
+    for p in "${HOME}/.config/homebrew" "${HOME}/.brewconfig" "${HOME}/.Brewfile"; do
+      [[ -e "${p}" ]] && sudo find "${p}" -xdev -print >> "${MANIFEST_TMP}"
+    done
+
+    echo "  Enumerating installed formulae/casks (brew list)"
+    BREW_LIST_TMP="$(mktemp)"
+    {
+      "${BREW_BIN}" list --verbose --formula 2>/dev/null || true
+      "${BREW_BIN}" list --verbose --cask 2>/dev/null || true
+    } > "${BREW_LIST_TMP}"
+    grep '^/' "${BREW_LIST_TMP}" >> "${MANIFEST_TMP}" || true
+    rm -f "${BREW_LIST_TMP}"
+
+    # Capture Homebrew-managed symlinks under the prefix that point into Cellar/opt
+    SYMLINK_DIRS=(
+      "${BREW_PREFIX}/bin"
+      "${BREW_PREFIX}/sbin"
+      "${BREW_PREFIX}/lib"
+      "${BREW_PREFIX}/include"
+      "${BREW_PREFIX}/share"
+      "${BREW_PREFIX}/Frameworks"
+    )
+    TARGET_ROOTS=(
+      "${BREW_CELLAR}"
+      "${BREW_PREFIX}/opt"
+    )
+    for d in "${SYMLINK_DIRS[@]}"; do
+      [[ -d "${d}" ]] || continue
+      while IFS= read -r -d '' link; do
+        target="$(python3 - <<'PY' "${link}"
+import os, sys
+path = sys.argv[1]
+try:
+    print(os.path.realpath(path))
+except Exception:
+    sys.exit(1)
+PY
+)"
+        for root in "${TARGET_ROOTS[@]}"; do
+          [[ -n "${root}" ]] || continue
+          case "${target}" in
+            "${root}"/*)
+              echo "${link}" >> "${MANIFEST_TMP}"
+              break
+              ;;
+          esac
+        done
+      done < <(sudo find "${d}" -maxdepth 1 -type l -print0)
+    done
+  else
+    echo "  WARN: brew not found; falling back to prefix-safe sweep (symlinks into Cellar/opt only)" >&2
+
+    # Always include core Homebrew locations
+    for p in "${BREW_REPO}" "${BREW_CELLAR}" "${BREW_PREFIX}/Caskroom" "${BREW_PREFIX}/opt"; do
+      [[ -e "${p}" ]] && sudo find "${p}" -xdev -print >> "${MANIFEST_TMP}"
+    done
+
+    # Capture launchd plists and Homebrew config files
+    for p in "${HOME}/Library/LaunchAgents" "/Library/LaunchDaemons"; do
+      [[ -d "${p}" ]] && sudo find "${p}" -maxdepth 1 -type f -iname 'homebrew*.plist' -print >> "${MANIFEST_TMP}"
+    done
+    for p in "${HOME}/.config/homebrew" "${HOME}/.brewconfig" "${HOME}/.Brewfile"; do
+      [[ -e "${p}" ]] && sudo find "${p}" -xdev -print >> "${MANIFEST_TMP}"
+    done
+
+    # Only include symlinks under common prefix dirs that point into Cellar/opt
+    SYMLINK_DIRS=(
+      "${BREW_PREFIX}/bin"
+      "${BREW_PREFIX}/sbin"
+      "${BREW_PREFIX}/lib"
+      "${BREW_PREFIX}/include"
+      "${BREW_PREFIX}/share"
+      "${BREW_PREFIX}/Frameworks"
+    )
+    TARGET_ROOTS=(
+      "${BREW_CELLAR}"
+      "${BREW_PREFIX}/opt"
+    )
+    for d in "${SYMLINK_DIRS[@]}"; do
+      [[ -d "${d}" ]] || continue
+      while IFS= read -r -d '' link; do
+        target="$(python3 - <<'PY' "${link}"
+import os, sys
+path = sys.argv[1]
+try:
+    print(os.path.realpath(path))
+except Exception:
+    sys.exit(1)
+PY
+)"
+        for root in "${TARGET_ROOTS[@]}"; do
+          [[ -n "${root}" ]] || continue
+          case "${target}" in
+            "${root}"/*)
+              echo "${link}" >> "${MANIFEST_TMP}"
+              break
+              ;;
+          esac
+        done
+      done < <(sudo find "${d}" -maxdepth 1 -type l -print0)
+    done
+  fi
+
+  sort -u "${MANIFEST_TMP}" > "${MANIFEST}"
+  rm -f "${MANIFEST_TMP}"
+
+  echo
+else
+  echo "[+] Using existing manifest at ${MANIFEST}"
+fi
+
+# --------------------------------------------------------------------
+# --------------------------------------------------------------------
+# Stats
+# --------------------------------------------------------------------
+
+echo
+echo "[+] Statistics"
+if [[ -f "${MANIFEST}" ]]; then
+  RAW_COUNT="$(grep -c '^/' "${MANIFEST}" || true)"
+  UNIQ_COUNT="$(sort -u "${MANIFEST}" | grep -c '^/' || true)"
+  echo "  Paths (raw)  : ${RAW_COUNT}"
+  echo "  Paths (uniq) : ${UNIQ_COUNT}"
+else
+  echo "  Manifest     : <missing>"
+fi
+echo
+
+# --------------------------------------------------------------------
+# Backup
+# --------------------------------------------------------------------
+
+if [[ "${MODE}" == "backup" ]]; then
+  echo "[+] BACKUP MODE"
+  echo "  Archive: ${ARCHIVE}"
+
+  if [[ -n "${BREW_BIN}" ]]; then
+    echo "  Capturing Brewfile"
+    if ! "${BREW_BIN}" bundle dump --describe --force --file "${BUNDLE}"; then
+      echo "  WARN: brew bundle dump failed; Brewfile not captured" >&2
+      BUNDLE=""
+    fi
+  else
+    echo "  WARN: brew not found; skipping Brewfile capture" >&2
+    BUNDLE=""
+  fi
+
+  echo "  Preparing file list from manifest"
+  grep '^/' "${MANIFEST}" | sort -u > "${FILELIST}"
+  FILE_COUNT="$(wc -l < "${FILELIST}" | tr -d ' ')"
+  echo "  Entries   : ${FILE_COUNT}"
+
+  if [[ "${FILE_COUNT}" -eq 0 ]]; then
+    echo "ERROR: Manifest produced no paths — aborting backup" >&2
+    exit 1
+  fi
+
+  echo "  Creating archive (this may take several minutes)..."
+  TAR_RC=0
+  sudo tar --xattrs --acls --preserve-permissions --numeric-owner \
+    -czpf "${ARCHIVE}" --files-from "${FILELIST}" || TAR_RC=$?
+
+  if [[ "${TAR_RC}" -gt 1 ]]; then
+    echo "ERROR: tar failed with exit ${TAR_RC} — check summary for details" >&2
+    exit "${TAR_RC}"
+  elif [[ "${TAR_RC}" -eq 1 ]]; then
+    echo "WARN: tar reported non-fatal issues (exit 1); continuing" >&2
+  fi
+
+  if [ ! -s "${ARCHIVE}" ]; then
+    echo "ERROR: Archive was created but is empty (${ARCHIVE})" >&2
+    exit 1
+  fi
+
+  set +e
+  FIRST_ARCHIVE_ENTRY="$(tar -tzf "${ARCHIVE}" 2>/dev/null | head -n 1 || true)"
+  set -e
+  if [ -z "${FIRST_ARCHIVE_ENTRY}" ]; then
+    echo "ERROR: Archive contains no entries - backup failed (${ARCHIVE})" >&2
+    exit 1
+  fi
+
+  shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256"
+
+  echo "  Backup complete"
+fi
+
+# --------------------------------------------------------------------
+# Clean (post-backup or clean-only)
+# --------------------------------------------------------------------
+
+if [[ "${CLEAN}" == "yes" ]]; then
+  if [[ "${MODE}" != "backup" && "${MODE}" != "clean" ]]; then
+    echo "ERROR: Clean requested in invalid mode (${MODE})" >&2
+    exit 1
+  fi
+  echo
+  if [[ "${MODE}" == "clean" ]]; then
+    echo "[+] CLEAN-ONLY MODE (using existing backup at ${SOURCE_DIR})"
+  else
+    echo "[+] CLEAN MODE (post-backup)"
+  fi
+  TEMP_CACHE="$(mktemp -d)"
+  echo "  Using temp cache for uninstall: ${TEMP_CACHE}"
+  echo "  Invoking Homebrew official uninstall"
+
+  HOMEBREW_CACHE="${TEMP_CACHE}" /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)"
+  rm -rf "${TEMP_CACHE}"
+
+  echo "[+] Removing known Homebrew-only leftovers"
+
+  sudo rm -rf \
+    /usr/local/Homebrew \
+    /usr/local/Cellar \
+    /usr/local/Caskroom \
+    /usr/local/opt \
+    /usr/local/var/homebrew \
+    /var/homebrew \
+    /var/log/homebrew \
+    /var/run/homebrew
+
+  rm -f "${HOME}/Library/LaunchAgents"/homebrew*.plist
+  sudo rm -f /Library/LaunchDaemons/homebrew*.plist
+
+  rm -rf \
+    "${HOME}/.config/homebrew" \
+    "${HOME}/.brewconfig" \
+    "${HOME}/.Brewfile"
+
+  echo "[+] Removing paths recorded in manifest"
+  grep '^/' "${MANIFEST}" | sort -u > "${CLEANLIST}"
+  MANIFEST_DELETE_COUNT="$(wc -l < "${CLEANLIST}" | tr -d ' ')"
+  echo "  Entries   : ${MANIFEST_DELETE_COUNT}"
+
+  if [[ "${MANIFEST_DELETE_COUNT}" -gt 0 ]]; then
+    echo "  Deleting (batched)"
+    tr '\n' '\0' < "${CLEANLIST}" | sudo xargs -0 -r -n100 rm -rf --
+    echo "  Manifest deletions complete"
+  else
+    echo "  NOTE: Manifest produced no paths to delete"
+  fi
+
+  echo "[+] Clean complete — system returned to pre-Homebrew state"
+fi
+
+# --------------------------------------------------------------------
+# Restore
+# --------------------------------------------------------------------
+
+if [[ "${MODE}" == "restore" ]]; then
+  echo "[+] RESTORE MODE"
+
+  if [[ "${APPLY}" != "yes" ]]; then
+    echo "  VERIFY ONLY"
+    echo "  Would restore (showing first 50 of ${UNIQ_COUNT} entries):"
+    grep '^/' "${MANIFEST}" | sort -u | head -50
+    echo "  ..."
+  else
+    echo "  APPLYING RESTORE"
+
+    echo "  Extracting archive (this may take several minutes)..."
+    TAR_RC=0
+    sudo tar \
+      --xattrs \
+      --acls \
+      --preserve-permissions \
+      --numeric-owner \
+      -xzpf "${ARCHIVE}" \
+      -C / || TAR_RC=$?
+
+    if [[ "${TAR_RC}" -gt 1 ]]; then
+      echo "ERROR: tar failed with exit ${TAR_RC} during restore — check summary for details" >&2
+      exit "${TAR_RC}"
+    elif [[ "${TAR_RC}" -eq 1 ]]; then
+      echo "WARN: tar reported non-fatal issues (exit 1); continuing" >&2
+    fi
+
+    sudo chown -R "$(whoami)":admin "${BREW_PREFIX:-/usr/local}"
+
+    echo "  Restore complete"
+  fi
+fi
+
+# --------------------------------------------------------------------
+# Default notice
+# --------------------------------------------------------------------
+
+if [[ "${MODE}" == "verify" ]]; then
+echo "[+] VERIFY-ONLY MODE (default)"
+fi
+
+echo
+echo "Artifacts:"
+printf "  Manifest : %s\n" "${MANIFEST}"
+printf "  Summary  : %s\n" "${SUMMARY}"
+if [ -f "${ARCHIVE}" ]; then
+  printf "  Archive  : %s\n" "${ARCHIVE}"
+fi
+if [ -f "${BUNDLE}" ]; then
+  printf "  Brewfile : %s\n" "${BUNDLE}"
+fi
+TOTAL_SECS=$(( $(date +%s) - START_EPOCH ))
+printf "Duration : %ds\n" "${TOTAL_SECS}"
+echo
+echo "DONE"

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+# Run this script if postinstall of ca-certificates package fails
+# brew postinstall ca-certificates
+
+# Create the directory if it doesn't exist
+sudo mkdir -p /usr/local/etc/ca-certificates
+
+# Copy the bundled CA file
+sudo cp /usr/local/opt/ca-certificates/share/ca-certificates/cacert.pem \
+        /usr/local/etc/ca-certificates/cert.pem
+
+# Set permissions
+sudo chmod 644 /usr/local/etc/ca-certificates/cert.pem
+
