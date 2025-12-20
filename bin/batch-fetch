@@ -1,0 +1,660 @@
+#!/usr/bin/env bash
+
+START_TIME=$(date +%s)
+MOUNT_DIR="${MOUNT_DIR:-/Volumes/Monterey}"
+export HOMEBREW_NO_ENV_HINTS=1
+# export HOMEBREW_NO_BOTTLE_SOURCE_FALLBACK=1
+
+# Default options
+WINDOW_SIZE=10
+RESUMABLE=false
+MAX_RUNTIME=""
+MAX_BATCHES=""
+RESET_STATE=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+	case $1 in
+	--window)
+		WINDOW_SIZE="$2"
+		if ! [[ ${WINDOW_SIZE} =~ ^[0-9]+$ ]] || [[ ${WINDOW_SIZE} -lt 1 ]]; then
+			echo "ERROR: --window must be a positive integer"
+			exit 1
+		fi
+		shift 2
+		;;
+	--resumable)
+		RESUMABLE=true
+		shift
+		;;
+	--max-runtime)
+		MAX_RUNTIME="$2"
+		if ! [[ ${MAX_RUNTIME} =~ ^[0-9]+[hms]$ ]]; then
+			echo "ERROR: --max-runtime must be in format: <number>[h|m|s] (e.g., 2h, 30m, 3600s)"
+			exit 1
+		fi
+		shift 2
+		;;
+	--max-batches)
+		MAX_BATCHES="$2"
+		if ! [[ ${MAX_BATCHES} =~ ^[0-9]+$ ]] || [[ ${MAX_BATCHES} -lt 1 ]]; then
+			echo "ERROR: --max-batches must be a positive integer"
+			exit 1
+		fi
+		shift 2
+		;;
+	--reset)
+		RESET_STATE=true
+		shift
+		;;
+	--help)
+		cat <<-EOF
+			Usage: batch-fetch [OPTIONS] [INPUT_FILE]
+
+			Fetch Homebrew bottles and dependencies in batches.
+
+			OPTIONS:
+			  --window <N>          Process N formulae per batch (default: 10)
+			  --resumable           Enable resumable mode with state tracking
+			  --max-runtime <TIME>  Maximum runtime (e.g., 2h, 30m, 3600s)
+			  --max-batches <N>     Process at most N batches then exit
+			  --reset               Clear saved state and start fresh (requires --resumable)
+			  --help                Show this help message
+
+			ARGUMENTS:
+			  INPUT_FILE            File containing list of formulae (one per line)
+			                        Default: uses _roots index for current freeze commit
+
+			EXAMPLES:
+			  # Basic usage (non-resumable)
+			  batch-fetch
+
+			  # Resumable mode for cron jobs
+			  batch-fetch --resumable --max-runtime 2h
+
+			  # Process specific number of batches
+			  batch-fetch --resumable --max-batches 50
+
+			  # Reset state and start over
+			  batch-fetch --resumable --reset
+
+			  # Custom window size with specific input file
+			  batch-fetch --window 20 /path/to/formulae.txt
+
+		EOF
+		exit 0
+		;;
+	*)
+		INPUT_FILE="$1"
+		shift
+		;;
+	esac
+done
+
+# Convert max runtime to seconds
+convert_to_seconds() {
+	local time_str="$1"
+	local value="${time_str%[hms]}"
+	local unit="${time_str: -1}"
+
+	case ${unit} in
+	h) echo $((value * 3600)) ;;
+	m) echo $((value * 60)) ;;
+	s) echo "${value}" ;;
+	esac
+}
+
+if [[ -n ${MAX_RUNTIME} ]]; then
+	MAX_RUNTIME_SECONDS=$(convert_to_seconds "${MAX_RUNTIME}")
+	echo "Maximum runtime: ${MAX_RUNTIME} (${MAX_RUNTIME_SECONDS} seconds)"
+fi
+
+# Get the freeze commit from homebrew-core repo
+HOMEBREW_CORE_DIR="${MOUNT_DIR}/repos/homebrew-core"
+if [[ ! -d ${HOMEBREW_CORE_DIR} ]]; then
+	echo "ERROR: Homebrew core repository not found at ${HOMEBREW_CORE_DIR}"
+	exit 1
+fi
+
+FREEZE_COMMIT=$(cd "${HOMEBREW_CORE_DIR}" && git rev-parse --short HEAD 2>/dev/null)
+if [[ -z ${FREEZE_COMMIT} ]]; then
+	echo "ERROR: Could not determine freeze commit from ${HOMEBREW_CORE_DIR}"
+	exit 1
+fi
+
+# State file for resumable mode
+STATE_FILE="${MOUNT_DIR}/repos/.batch-fetch-state-${FREEZE_COMMIT}"
+LOCK_FILE="${MOUNT_DIR}/repos/.batch-fetch-lock-${FREEZE_COMMIT}"
+
+# Lock file management
+acquire_lock() {
+	# Check if lock file exists and is stale (>24 hours old)
+	if [[ -f ${LOCK_FILE} ]]; then
+		local lock_pid
+		lock_pid=$(cat "${LOCK_FILE}" 2>/dev/null || echo "")
+		local lock_age=$(($(date +%s) - $(stat -f %m "${LOCK_FILE}" 2>/dev/null || stat -c %Y "${LOCK_FILE}" 2>/dev/null || echo 0)))
+
+		if [[ -n ${lock_pid} ]] && kill -0 "${lock_pid}" 2>/dev/null; then
+			echo "ERROR: Another instance is already running (PID: ${lock_pid})"
+			exit 1
+		elif [[ ${lock_age} -lt 86400 ]]; then
+			echo "ERROR: Lock file exists from recent run but process not found."
+			echo "If you're sure no other instance is running, remove: ${LOCK_FILE}"
+			exit 1
+		else
+			echo "WARNING: Removing stale lock file (>24 hours old)"
+			rm -f "${LOCK_FILE}"
+		fi
+	fi
+
+	echo $$ >"${LOCK_FILE}"
+}
+
+release_lock() {
+	rm -f "${LOCK_FILE}"
+}
+
+# State management functions
+save_state() {
+	if [[ ${RESUMABLE} == true ]]; then
+		local current_line="$1"
+		local batches_processed="$2"
+		cat >"${STATE_FILE}" <<-EOF
+			{
+			  "input_file": "${INPUT_FILE}",
+			  "window_size": ${WINDOW_SIZE},
+			  "last_line_processed": ${current_line},
+			  "batches_processed": ${batches_processed},
+			  "last_update": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+			  "freeze_commit": "${FREEZE_COMMIT}"
+			}
+		EOF
+	fi
+}
+
+load_state() {
+	if [[ ${RESUMABLE} == true ]] && [[ -f ${STATE_FILE} ]] && [[ ${RESET_STATE} == false ]]; then
+		# Simple bash parsing of JSON (good enough for our simple structure)
+		local saved_input
+		saved_input=$(grep '"input_file"' "${STATE_FILE}" | sed 's/.*": "\(.*\)".*/\1/')
+		local saved_line
+		saved_line=$(grep '"last_line_processed"' "${STATE_FILE}" | sed 's/.*": \([0-9]*\).*/\1/')
+		local saved_batches
+		saved_batches=$(grep '"batches_processed"' "${STATE_FILE}" | sed 's/.*": \([0-9]*\).*/\1/')
+
+		# Verify input file matches
+		if [[ ${saved_input} == "${INPUT_FILE}" ]]; then
+			echo "Resuming from line ${saved_line} (${saved_batches} batches already processed)"
+			echo "${saved_line}|${saved_batches}"
+		else
+			echo "WARNING: State file exists but input file has changed"
+			echo "Saved: ${saved_input}"
+			echo "Current: ${INPUT_FILE}"
+			echo "Starting from beginning"
+			echo "1|0"
+		fi
+	else
+		echo "1|0"
+	fi
+}
+
+# Signal handlers for graceful shutdown
+interrupted=false
+handle_signal() {
+	echo "" >&2
+	echo "Received interrupt signal, finishing current batch..." >&2
+	interrupted=true
+}
+
+trap handle_signal SIGINT SIGTERM
+
+# Cleanup function
+cleanup() {
+	release_lock
+	# Clean up temp files
+	[[ -n ${FETCH_RESULTS_NEW} ]] && [[ -f ${FETCH_RESULTS_NEW} ]] && rm -f "${FETCH_RESULTS_NEW}"
+	[[ -n ${EXISTING_TEMP} ]] && [[ -f ${EXISTING_TEMP} ]] && rm -f "${EXISTING_TEMP}"
+	[[ -n ${UPDATED_TEMP} ]] && [[ -f ${UPDATED_TEMP} ]] && rm -f "${UPDATED_TEMP}"
+	[[ -n ${COMBINED_TEMP} ]] && [[ -f ${COMBINED_TEMP} ]] && rm -f "${COMBINED_TEMP}"
+	[[ -n ${FILTERED_INPUT} ]] && [[ -f ${FILTERED_INPUT} ]] && rm -f "${FILTERED_INPUT}"
+	[[ -n ${NOPLATFORM_TEMP} ]] && [[ -f ${NOPLATFORM_TEMP} ]] && rm -f "${NOPLATFORM_TEMP}"
+}
+
+trap cleanup EXIT
+
+# Acquire lock if in resumable mode
+if [[ ${RESUMABLE} == true ]]; then
+	acquire_lock
+	
+	# Handle reset
+	if [[ ${RESET_STATE} == true ]]; then
+		echo "Resetting state..."
+		rm -f "${STATE_FILE}"
+	fi
+fi
+
+# Determine input file
+if [[ -n ${INPUT_FILE} ]]; then
+	if [[ ! -f ${INPUT_FILE} ]]; then
+		echo "ERROR: Input file not found: ${INPUT_FILE}"
+		exit 1
+	fi
+	echo "Using input file: ${INPUT_FILE}"
+else
+	INPUT_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_roots"
+	if [[ ! -f ${INPUT_FILE} ]]; then
+		echo "ERROR: Roots index not found at ${INPUT_FILE}"
+		echo "Using all formulae index instead"
+		INPUT_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_all"
+		if [[ ! -f ${INPUT_FILE} ]]; then
+			echo "ERROR: No index file found"
+			exit 1
+		fi
+	fi
+	echo "Using default index for commit ${FREEZE_COMMIT}"
+fi
+
+# Load state if resumable
+state_data=$(load_state)
+start_line=$(echo "${state_data}" | cut -d'|' -f1)
+batches_completed=$(echo "${state_data}" | cut -d'|' -f2)
+
+# Initialize CSV results file
+FETCH_RESULTS="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_fetch_results"
+FETCH_RESULTS_NEW=$(mktemp)
+
+# Create with header if it doesn't exist
+if [[ ! -f ${FETCH_RESULTS} ]]; then
+	echo "# fields: formula,bottle,source,platform-specific,error" >"${FETCH_RESULTS}"
+fi
+
+# Function to add or update formula result in memory
+# Usage: add_fetch_result "formula_name" "true/false" "true/false" "true/false" "error message or empty"
+add_fetch_result() {
+	local formula="$1"
+	local has_bottle="$2"
+	local has_source="$3"
+	local platform_specific="$4"
+	local error_msg="$5"
+
+	# Normalize formula name (remove homebrew/core/ prefix if present)
+	formula="${formula#homebrew/core/}"
+
+	# Escape commas in error message
+	error_msg="${error_msg//,/;}"
+
+	# Store result in temp file for this session
+	echo "${formula},${has_bottle},${has_source},${platform_specific},${error_msg}" >>"${FETCH_RESULTS_NEW}"
+}
+
+# Load no-platform index for platform detection (but don't filter yet)
+NOPLATFORM_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_noplatform"
+NOPLATFORM_TEMP=$(mktemp)
+if [[ -f ${NOPLATFORM_FILE} ]]; then
+	echo "Loading platform information..."
+	# Skip comment lines and create a temp file with just formula names for grep
+	grep -v '^#' "${NOPLATFORM_FILE}" | cut -d',' -f1 >"${NOPLATFORM_TEMP}"
+	NOPLATFORM_COUNT=$(wc -l <"${NOPLATFORM_TEMP}" | tr -d ' ')
+	echo "Loaded platform information for ${NOPLATFORM_COUNT} formulae"
+
+	# Function to check if formula is in noplatform list
+	is_noplatform() {
+		grep -qxF "$1" "${NOPLATFORM_TEMP}"
+	}
+
+	# Function to get platforms for a formula
+	get_platforms() {
+		grep "^$1," "${NOPLATFORM_FILE}" | cut -d',' -f2
+	}
+
+	# Create filtered input file (exclude platform-incompatible formulae)
+	FILTERED_INPUT=$(mktemp)
+	while IFS= read -r formula; do
+		if ! is_noplatform "${formula}"; then
+			echo "${formula}"
+		fi
+	done <"${INPUT_FILE}" >"${FILTERED_INPUT}"
+	EXCLUDED_COUNT=${NOPLATFORM_COUNT}
+	INPUT_FILE="${FILTERED_INPUT}"
+	echo "Filtered to $(wc -l <"${INPUT_FILE}") formulae (excluded ${EXCLUDED_COUNT} without platform bottles)"
+fi
+
+echo "Window size: ${WINDOW_SIZE} formulae per batch"
+
+# Get cache directory once
+CACHE_DIR="$(brew --cache)/downloads"
+
+# Recursive function to fetch a batch, retrying with failures removed
+fetch_batch() {
+	local batch="$1"
+	local indent="$2"
+	local count
+	count=$(echo "${batch}" | wc -w | tr -d ' ')
+
+	if [[ ${count} -eq 0 ]]; then
+		return 0
+	fi
+
+	# Pre-check cache and separate formulae into cached vs need-fetch
+	local already_cached=()
+	local need_fetch=()
+
+	for formula in ${batch}; do
+		if find "${CACHE_DIR}" -name "*--${formula}--*.bottle*.tar.gz" -print -quit 2>/dev/null | grep -q .; then
+			already_cached+=("${formula}")
+			add_fetch_result "${formula}" "true" "false" "false" ""
+		else
+			need_fetch+=("${formula}")
+		fi
+	done
+
+	# Report cached bottles
+	if [[ ${#already_cached[@]} -gt 0 ]]; then
+		if [[ ${#already_cached[@]} -eq 1 ]]; then
+			echo "${indent}↻ Already cached ${#already_cached[@]} bottle: ${already_cached[*]}" >&2
+		else
+			echo "${indent}↻ Already cached ${#already_cached[@]} bottles" >&2
+		fi
+	fi
+
+	# If everything is cached, we're done
+	if [[ ${#need_fetch[@]} -eq 0 ]]; then
+		return 0
+	fi
+
+	# Convert array back to space-separated string
+	local fetch_batch_str="${need_fetch[*]}"
+
+	# Try batch fetch for uncached formulae
+	local fetch_error
+	# shellcheck disable=SC2086
+	if fetch_error=$(brew fetch --deps ${fetch_batch_str} 2>&1); then
+		# Fetch succeeded, but verify bottles were actually downloaded (not just source)
+		local bottles_found=()
+		local no_bottles=()
+
+		for formula in ${fetch_batch_str}; do
+			# Check if a bottle file exists for this formula
+			if find "${CACHE_DIR}" -name "*--${formula}--*.bottle*.tar.gz" -print -quit 2>/dev/null | grep -q .; then
+				bottles_found+=("${formula}")
+				add_fetch_result "${formula}" "true" "false" "false" ""
+			else
+				# No bottle found - check if source was downloaded
+				if find "${CACHE_DIR}" -name "*--${formula}--*.tar.*" -print -quit 2>/dev/null | grep -q .; then
+					# Source tarball downloaded - check if platform-specific
+					local is_platform_specific="false"
+					if is_noplatform "${formula}"; then
+						is_platform_specific="true"
+					fi
+					add_fetch_result "${formula}" "false" "true" "${is_platform_specific}" ""
+					no_bottles+=("${formula}")
+				else
+					# Nothing downloaded at all
+					local is_platform_specific="false"
+					if is_noplatform "${formula}"; then
+						is_platform_specific="true"
+					fi
+					add_fetch_result "${formula}" "false" "false" "${is_platform_specific}" ""
+					no_bottles+=("${formula}")
+				fi
+			fi
+		done
+
+		# Report what was actually downloaded
+		if [[ ${#bottles_found[@]} -gt 0 ]]; then
+			if [[ ${#bottles_found[@]} -eq 1 ]]; then
+				echo "${indent}✓ Downloaded ${#bottles_found[@]} bottle: ${bottles_found[*]}" >&2
+			else
+				echo "${indent}✓ Downloaded ${#bottles_found[@]} bottles:" >&2
+				for formula in "${bottles_found[@]}"; do
+					echo "${indent}  - ${formula}" >&2
+				done
+			fi
+		fi
+
+		# Report formulas with no bottles
+		if [[ ${#no_bottles[@]} -gt 0 ]]; then
+			echo "${indent}⚠ Problems with:" >&2
+			for formula in "${no_bottles[@]}"; do
+				# Determine the specific problem
+				local problem_type="source-only"
+				if is_noplatform "${formula}"; then
+					local platforms
+					platforms=$(get_platforms "${formula}")
+					if [[ -n ${platforms} ]]; then
+						problem_type="platform-specific (only: ${platforms})"
+					else
+						problem_type="platform-specific (no bottles)"
+					fi
+				fi
+				echo "${indent}  - ${formula} (${problem_type})" >&2
+				failed_formulas+=("${formula}")
+			done
+		fi
+
+		return 0
+	fi
+
+	# Parse error to find failed formula
+	local failed
+	failed=$(echo "${fetch_error}" | sed -n 's/^Error: \([^:]*\):.*/\1/p' | head -1)
+
+	if [[ -n ${failed} ]]; then
+		echo "${indent}✗ Failed: ${failed}" >&2
+
+		# Extract error message
+		local error_message
+		error_message=$(echo "${fetch_error}" | grep "^Error:" | head -1 | sed 's/^Error: [^:]*: //')
+
+		# Check if platform-specific
+		local is_platform_specific="false"
+		if is_noplatform "${failed}"; then
+			is_platform_specific="true"
+		fi
+
+		# Add to CSV with error
+		add_fetch_result "${failed}" "false" "false" "${is_platform_specific}" "${error_message}"
+		failed_formulas+=("${failed}")
+
+		# Extract just the formula name (remove homebrew/core/ prefix if present)
+		local failed_name="${failed#homebrew/core/}"
+
+		# Remove failed formula and retry with remaining
+		# Try to match both with and without homebrew/core/ prefix
+		local remaining
+		remaining=$(echo "${fetch_batch_str}" | tr ' ' '\n' | grep -v -e "^${failed}$" -e "^${failed_name}$" | tr '\n' ' ')
+
+		local remaining_count
+		remaining_count=$(echo "${remaining}" | wc -w | tr -d ' ')
+
+		# Safety check: if we didn't actually remove anything, abort to prevent infinite loop
+		if [[ ${remaining_count} -ge ${count} ]]; then
+			echo "${indent}ERROR: Could not remove failed formula from batch, aborting to prevent infinite loop" >&2
+			echo "${indent}Batch: ${fetch_batch_str}" >&2
+			echo "${indent}Failed: ${failed}" >&2
+			return 1
+		fi
+
+		if [[ ${remaining_count} -gt 0 ]]; then
+			if [[ ${remaining_count} -eq 1 ]]; then
+				echo "${indent}→ Retrying with ${remaining_count} formula..." >&2
+			else
+				echo "${indent}→ Retrying with ${remaining_count} formulae..." >&2
+			fi
+			fetch_batch "${remaining}" "${indent}  "
+		fi
+	else
+		# Couldn't parse error, fall back to individual fetches
+		echo "${indent}Could not parse error, trying formulae individually..." >&2
+		for formula in ${fetch_batch_str}; do
+			echo "${indent}  Fetching ${formula}..." >&2
+			local individual_error
+			if individual_error=$(brew fetch --deps "${formula}" 2>&1); then
+				echo "${indent}  ✓ ${formula}" >&2
+				# Still need to check what was downloaded
+				local is_platform_specific="false"
+				if is_noplatform "${formula}"; then
+					is_platform_specific="true"
+				fi
+				if find "${CACHE_DIR}" -name "*--${formula}--*.bottle*.tar.gz" -print -quit 2>/dev/null | grep -q .; then
+					add_fetch_result "${formula}" "true" "false" "false" ""
+				elif find "${CACHE_DIR}" -name "*--${formula}--*.tar.*" -print -quit 2>/dev/null | grep -q .; then
+					add_fetch_result "${formula}" "false" "true" "${is_platform_specific}" ""
+				else
+					add_fetch_result "${formula}" "false" "false" "${is_platform_specific}" ""
+				fi
+			else
+				echo "${indent}  ✗ ${formula}" >&2
+				# Extract error message
+				local error_message
+				error_message=$(echo "${individual_error}" | grep "^Error:" | head -1 | sed 's/^Error: [^:]*: //')
+				local is_platform_specific="false"
+				if is_noplatform "${formula}"; then
+					is_platform_specific="true"
+				fi
+				add_fetch_result "${formula}" "false" "false" "${is_platform_specific}" "${error_message}"
+				failed_formulas+=("${formula}")
+			fi
+		done
+	fi
+}
+
+start=${start_line}
+end=$((start_line + WINDOW_SIZE - 1))
+failed_formulas=()
+batches_processed=0
+
+while true; do
+	# Check if we should exit (interrupted, max runtime, or max batches)
+	if [[ ${interrupted} == true ]]; then
+		echo "" >&2
+		echo "Interrupted - saving state and exiting..." >&2
+		break
+	fi
+
+	if [[ -n ${MAX_RUNTIME_SECONDS} ]]; then
+		elapsed=$(($(date +%s) - START_TIME))
+		if [[ ${elapsed} -ge ${MAX_RUNTIME_SECONDS} ]]; then
+			echo "" >&2
+			echo "Maximum runtime reached (${MAX_RUNTIME}) - saving state and exiting..." >&2
+			break
+		fi
+	fi
+
+	if [[ -n ${MAX_BATCHES} ]] && [[ ${batches_processed} -ge ${MAX_BATCHES} ]]; then
+		echo "" >&2
+		echo "Maximum batches reached (${MAX_BATCHES}) - saving state and exiting..." >&2
+		break
+	fi
+
+	sed_cmd="${start},${end}p"
+	lines=$(sed -n "${sed_cmd}" "${INPUT_FILE}")
+	if [[ -z ${lines} ]]; then
+		echo "" >&2
+		echo "All formulae processed!" >&2
+		# Clear state file when complete
+		if [[ ${RESUMABLE} == true ]]; then
+			rm -f "${STATE_FILE}"
+		fi
+		break
+	fi
+
+	line_count=$(echo "${lines}" | wc -w | tr -d ' ')
+	echo "" >&2
+	if [[ ${line_count} -eq 1 ]]; then
+		echo "Fetching bottles for lines ${start} to ${end} (${line_count} formula)..." >&2
+	else
+		echo "Fetching bottles for lines ${start} to ${end} (${line_count} formulae)..." >&2
+	fi
+	fetch_batch "${lines}" "  "
+
+	batches_processed=$((batches_processed + 1))
+	
+	# Save state after each batch in resumable mode
+	if [[ ${RESUMABLE} == true ]]; then
+		save_state "${end}" "$((batches_completed + batches_processed))"
+	fi
+
+	start=$((start + WINDOW_SIZE))
+	end=$((end + WINDOW_SIZE))
+done
+
+# Merge new results with existing results, keeping only unique entries by formula name
+echo "" >&2
+echo "Merging results..." >&2
+
+# Create a temp file with just the header
+FETCH_RESULTS_MERGED=$(mktemp)
+head -n 1 "${FETCH_RESULTS}" >"${FETCH_RESULTS_MERGED}"
+
+# Get all existing non-header entries
+EXISTING_TEMP=$(mktemp)
+grep -v '^#' "${FETCH_RESULTS}" >"${EXISTING_TEMP}" 2>/dev/null || true
+
+# Build a list of formulae we've updated
+UPDATED_TEMP=$(mktemp)
+while IFS= read -r line; do
+	formula=$(echo "${line}" | cut -d',' -f1)
+	echo "${formula}" >>"${UPDATED_TEMP}"
+done <"${FETCH_RESULTS_NEW}"
+
+# Combine all entries (new overrides old), then sort
+COMBINED_TEMP=$(mktemp)
+
+# Add all new/updated entries
+cat "${FETCH_RESULTS_NEW}" >>"${COMBINED_TEMP}"
+
+# Add old entries for formulae we didn't update
+while IFS= read -r line; do
+	formula=$(echo "${line}" | cut -d',' -f1)
+	if ! grep -qxF "${formula}" "${UPDATED_TEMP}"; then
+		echo "${line}" >>"${COMBINED_TEMP}"
+	fi
+done <"${EXISTING_TEMP}"
+
+# Sort by formula name and append to merged file
+sort -t',' -k1,1 "${COMBINED_TEMP}" >>"${FETCH_RESULTS_MERGED}"
+
+# Replace the original file with merged results
+mv "${FETCH_RESULTS_MERGED}" "${FETCH_RESULTS}"
+
+# Clean up temp files (handled by trap, but be explicit)
+rm -f "${FETCH_RESULTS_NEW}" "${EXISTING_TEMP}" "${UPDATED_TEMP}" "${COMBINED_TEMP}"
+
+# Report failed formulae at the end
+if [[ ${#failed_formulas[@]} -gt 0 ]]; then
+	echo "" >&2
+	echo "Failed formulae:" >&2
+	printf '%s\n' "${failed_formulas[@]}" >&2
+	echo "" >&2
+	echo "Total failed: ${#failed_formulas[@]}" >&2
+fi
+
+# Report summary from CSV results
+echo "" >&2
+echo "=== Summary ===" >&2
+TOTAL_RESULTS=$(grep -v '^#' "${FETCH_RESULTS}" | wc -l | tr -d ' ')
+BOTTLES_COUNT=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$2=="true"' | wc -l | tr -d ' ')
+SOURCES_COUNT=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$2=="false" && $3=="true"' | wc -l | tr -d ' ')
+PLATFORM_SPECIFIC_COUNT=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$4=="true"' | wc -l | tr -d ' ')
+ERRORS_COUNT=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$5!=""' | wc -l | tr -d ' ')
+echo "Fetch results saved to: ${FETCH_RESULTS}" >&2
+echo "Total formulae processed: ${TOTAL_RESULTS}" >&2
+echo "Bottles downloaded: ${BOTTLES_COUNT}" >&2
+echo "Source-only downloads: ${SOURCES_COUNT}" >&2
+echo "Platform-specific (no bottles): ${PLATFORM_SPECIFIC_COUNT}" >&2
+echo "Errors encountered: ${ERRORS_COUNT}" >&2
+
+if [[ ${RESUMABLE} == true ]]; then
+	echo "" >&2
+	echo "Batches processed this run: ${batches_processed}" >&2
+	if [[ -f ${STATE_FILE} ]]; then
+		echo "State saved to: ${STATE_FILE}" >&2
+		echo "Run again to resume from line $((end + 1))" >&2
+	fi
+fi
+
+# Final elapsed time
+elapsed=$(($(date +%s) - START_TIME))
+echo "" >&2
+echo "Total runtime: ${elapsed} seconds ($((elapsed / 60)) minutes)" >&2

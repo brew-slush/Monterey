@@ -17,3 +17,6 @@
 
 
 - [ ] Create a script to automate the installation of commonly used Homebrew packages post-installation.
+
+
+This is great. This is exactly what we wanted for the install_clt but could not do it right. Now let's change dual-log-ui by adding the functionality from install_clt to it. Here's what we will do: (1) status bullets are printed into the buffer and the top window while scrolling to fit as done in dual-log-ui already, and (2) the tail from the installer logs is printed into the second window.
