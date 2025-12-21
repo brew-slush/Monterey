@@ -19,4 +19,9 @@
 - [ ] Create a script to automate the installation of commonly used Homebrew packages post-installation.
 
 
-This is great. This is exactly what we wanted for the install_clt but could not do it right. Now let's change dual-log-ui by adding the functionality from install_clt to it. Here's what we will do: (1) status bullets are printed into the buffer and the top window while scrolling to fit as done in dual-log-ui already, and (2) the tail from the installer logs is printed into the second window.
+Two modes/steps:
+
+- **Brew Slush Setup**: `slush-setup`, clones the homebrew-core and homebrew-cask repositories at specified commit hashes into the share
+- **Per Machine Installation**: `brew-install`, installs Homebrew for users on individual Monterey machines using the frozen repositories as the origin, and sets up the user's environment to use them
+
+>At least one machine during the per machine installation should be setup to fetch casks and formulae for archiving purposes in the background at off peak hours.

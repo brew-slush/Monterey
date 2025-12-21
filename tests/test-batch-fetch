@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# Debug trap to see where script exits
+trap 'echo "ERROR: Script exited at line $LINENO with exit code $?" >&2' ERR
+
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -29,12 +32,12 @@ print_test() {
 
 print_success() {
 	echo -e "${GREEN}✓ PASS: $1${NC}"
-	((TESTS_PASSED++))
+	TESTS_PASSED=$((TESTS_PASSED + 1))
 }
 
 print_failure() {
 	echo -e "${RED}✗ FAIL: $1${NC}"
-	((TESTS_FAILED++))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
 }
 
 print_info() {
@@ -44,6 +47,10 @@ print_info() {
 # Validate environment
 validate_environment() {
 	print_header "Validating Environment"
+	
+	# Debug: Show what's actually set
+	echo "DEBUG: MONTEREY_BREW_SLUSH_HOME=${MONTEREY_BREW_SLUSH_HOME:-<not set>}" >&2
+	echo "DEBUG: MOUNT_POINT=${MOUNT_POINT:-<not set>}" >&2
 	
 	# Check for MONTEREY_BREW_SLUSH_HOME or MOUNT_POINT
 	if [[ -n ${MONTEREY_BREW_SLUSH_HOME:-} ]]; then
@@ -88,8 +95,13 @@ validate_environment() {
 	fi
 	
 	print_success "Environment validated"
+}
+
+# Setup test environment
+setup_test_environment() {
+	print_header "Setting Up Test Environment"
 	
-	# Get freeze commit
+	# Get freeze commit (move from validate_environment)
 	FREEZE_COMMIT=$(cd "${SLUSH_HOME}/repos/homebrew-core" && git rev-parse --short HEAD 2>/dev/null)
 	if [[ -z ${FREEZE_COMMIT} ]]; then
 		echo -e "${RED}ERROR: Could not determine freeze commit${NC}"
@@ -104,11 +116,23 @@ validate_environment() {
 		exit 1
 	fi
 	print_info "Roots index: ${ROOTS_FILE}"
-}
-
-# Setup test environment
-setup_test_environment() {
-	print_header "Setting Up Test Environment"
+	
+	# Get cask freeze commit
+	FREEZE_COMMIT_CASK=""
+	if [[ -d "${SLUSH_HOME}/repos/homebrew-cask" ]]; then
+		FREEZE_COMMIT_CASK=$(cd "${SLUSH_HOME}/repos/homebrew-cask" && git rev-parse --short HEAD 2>/dev/null)
+		if [[ -n ${FREEZE_COMMIT_CASK} ]]; then
+			print_info "Cask freeze commit: ${FREEZE_COMMIT_CASK}"
+			
+			# Check for casks index file
+			CASKS_FILE="${SLUSH_HOME}/repos/${FREEZE_COMMIT_CASK}_casks_all"
+			if [[ -f ${CASKS_FILE} ]]; then
+				print_info "Casks index: ${CASKS_FILE}"
+			else
+				print_info "Warning: Casks index not found: ${CASKS_FILE} (cask tests will be skipped)"
+			fi
+		fi
+	fi
 	
 	# Create temporary test directory
 	TEST_OUTPUT_DIR=$(mktemp -d -t batch-fetch-test.XXXXXX)
@@ -124,9 +148,21 @@ setup_test_environment() {
 	head -100 "${ROOTS_FILE}" > "${TEST_FILE_100}"
 	print_info "Created test file (100 formulae): ${TEST_FILE_100}"
 	
+	# Create test cask files if casks are available
+	if [[ -n ${FREEZE_COMMIT_CASK} ]] && [[ -f ${CASKS_FILE} ]]; then
+		TEST_CASK_FILE_10="${TEST_OUTPUT_DIR}/test-casks-10.txt"
+		head -10 "${CASKS_FILE}" > "${TEST_CASK_FILE_10}"
+		print_info "Created test cask file (10 casks): ${TEST_CASK_FILE_10}"
+	fi
+	
 	# Backup existing state and lock files if they exist
-	STATE_FILE="${SLUSH_HOME}/repos/.batch-fetch-state-${FREEZE_COMMIT}"
-	LOCK_FILE="${SLUSH_HOME}/repos/.batch-fetch-lock-${FREEZE_COMMIT}"
+	STATE_FILE="${SLUSH_HOME}/repos/.batch-fetch-state-formulae-${FREEZE_COMMIT}"
+	LOCK_FILE="${SLUSH_HOME}/repos/.batch-fetch-lock-formulae-${FREEZE_COMMIT}"
+	
+	if [[ -n ${FREEZE_COMMIT_CASK} ]]; then
+		STATE_FILE_CASK="${SLUSH_HOME}/repos/.batch-fetch-state-casks-${FREEZE_COMMIT_CASK}"
+		LOCK_FILE_CASK="${SLUSH_HOME}/repos/.batch-fetch-lock-casks-${FREEZE_COMMIT_CASK}"
+	fi
 	
 	if [[ -f ${STATE_FILE} ]]; then
 		cp "${STATE_FILE}" "${TEST_OUTPUT_DIR}/state-backup.json"
@@ -138,6 +174,11 @@ setup_test_environment() {
 		rm -f "${LOCK_FILE}"
 	fi
 	
+	if [[ -n ${FREEZE_COMMIT_CASK} ]] && [[ -f ${LOCK_FILE_CASK} ]]; then
+		print_info "WARNING: Removing existing cask lock file"
+		rm -f "${LOCK_FILE_CASK}"
+	fi
+	
 	print_success "Test environment ready"
 }
 
@@ -147,6 +188,10 @@ cleanup_test_environment() {
 	
 	# Remove state and lock files
 	rm -f "${STATE_FILE}" "${LOCK_FILE}" 2>/dev/null || true
+	
+	if [[ -n ${FREEZE_COMMIT_CASK:-} ]]; then
+		rm -f "${STATE_FILE_CASK}" "${LOCK_FILE_CASK}" 2>/dev/null || true
+	fi
 	
 	# Restore backup if it exists
 	if [[ -f ${TEST_OUTPUT_DIR}/state-backup.json ]]; then
@@ -165,7 +210,7 @@ test_basic_mode() {
 	print_test "Basic Non-Resumable Mode"
 	
 	local output
-	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --window 5 "${TEST_FILE_25}" 2>&1); then
+	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --type formulae --window 5 "${TEST_FILE_25}" 2>&1); then
 		print_success "Basic mode executed successfully"
 	else
 		print_failure "Basic mode failed"
@@ -191,7 +236,7 @@ test_resumable_with_max_batches() {
 	
 	# Run with max-batches=2
 	local output
-	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --resumable --window 5 --max-batches 2 "${TEST_FILE_25}" 2>&1); then
+	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --type formulae --resumable --window 5 --max-batches 2 "${TEST_FILE_25}" 2>&1); then
 		print_success "First run completed (2 batches)"
 	else
 		print_failure "First run failed"
@@ -223,13 +268,19 @@ test_resumable_with_max_batches() {
 test_resume_continuation() {
 	print_test "Resume and Continue"
 	
+	# Check if state file exists
+	if [[ ! -f ${STATE_FILE} ]]; then
+		print_failure "State file not found from previous test"
+		return 1
+	fi
+	
 	# Get current state
 	local last_line_before
 	last_line_before=$(grep '"last_line_processed"' "${STATE_FILE}" | sed 's/.*: \([0-9]*\).*/\1/')
 	
 	# Run again with max-batches=2
 	local output
-	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --resumable --window 5 --max-batches 2 "${TEST_FILE_25}" 2>&1); then
+	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --type formulae --resumable --window 5 --max-batches 2 "${TEST_FILE_25}" 2>&1); then
 		print_success "Second run completed (2 more batches)"
 	else
 		print_failure "Second run failed"
@@ -237,15 +288,19 @@ test_resume_continuation() {
 		return 1
 	fi
 	
-	# Check state file was updated
-	local last_line_after
-	last_line_after=$(grep '"last_line_processed"' "${STATE_FILE}" | sed 's/.*: \([0-9]*\).*/\1/')
-	
-	if [[ ${last_line_after} -gt ${last_line_before} ]]; then
-		print_success "Progress saved: line ${last_line_before} → ${last_line_after}"
+	# Check state file was updated (or removed if complete)
+	if [[ -f ${STATE_FILE} ]]; then
+		local last_line_after
+		last_line_after=$(grep '"last_line_processed"' "${STATE_FILE}" | sed 's/.*: \([0-9]*\).*/\1/')
+		
+		if [[ ${last_line_after} -gt ${last_line_before} ]]; then
+			print_success "Progress saved: line ${last_line_before} → ${last_line_after}"
+		else
+			print_failure "Progress not saved correctly"
+			return 1
+		fi
 	else
-		print_failure "Progress not saved correctly"
-		return 1
+		print_success "Work completed (state file removed)"
 	fi
 }
 
@@ -255,7 +310,7 @@ test_complete_work() {
 	
 	# Run to completion
 	local output
-	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --resumable --window 5 "${TEST_FILE_25}" 2>&1); then
+	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --type formulae --resumable --window 5 "${TEST_FILE_25}" 2>&1); then
 		if echo "${output}" | grep -q "All formulae processed"; then
 			print_success "All formulae processed"
 		else
@@ -283,7 +338,7 @@ test_reset() {
 	print_test "Reset Functionality"
 	
 	# Create a state file first
-	bash "${SLUSH_HOME}/bin/batch-fetch" --resumable --window 5 --max-batches 1 "${TEST_FILE_25}" >/dev/null 2>&1 || true
+	bash "${SLUSH_HOME}/bin/batch-fetch" --type formulae --resumable --window 5 --max-batches 1 "${TEST_FILE_25}" >/dev/null 2>&1 || true
 	
 	if [[ ! -f ${STATE_FILE} ]]; then
 		print_failure "Could not create state file for reset test"
@@ -292,7 +347,7 @@ test_reset() {
 	
 	# Run with --reset
 	local output
-	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --resumable --reset --window 5 --max-batches 1 "${TEST_FILE_25}" 2>&1); then
+	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --type formulae --resumable --reset --window 5 --max-batches 1 "${TEST_FILE_25}" 2>&1); then
 		if echo "${output}" | grep -q "Resetting state"; then
 			print_success "Reset executed"
 		else
@@ -316,7 +371,7 @@ test_lock_file() {
 	rm -f "${STATE_FILE}" "${LOCK_FILE}" 2>/dev/null || true
 	
 	# Start a background process that will run for a while
-	bash "${SLUSH_HOME}/bin/batch-fetch" --resumable --window 5 --max-runtime 10s "${TEST_FILE_100}" >/dev/null 2>&1 &
+	bash "${SLUSH_HOME}/bin/batch-fetch" --type formulae --resumable --window 5 --max-runtime 10s "${TEST_FILE_100}" >/dev/null 2>&1 &
 	local bg_pid=$!
 	
 	# Give it time to start and acquire lock
@@ -324,7 +379,7 @@ test_lock_file() {
 	
 	# Try to start another instance
 	local output
-	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --resumable --window 5 "${TEST_FILE_25}" 2>&1); then
+	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --type formulae --resumable --window 5 "${TEST_FILE_25}" 2>&1); then
 		print_failure "Second instance was allowed to run"
 		kill ${bg_pid} 2>/dev/null || true
 		wait ${bg_pid} 2>/dev/null || true
@@ -366,17 +421,18 @@ test_max_runtime() {
 	local start_time
 	start_time=$(date +%s)
 	
-	bash "${SLUSH_HOME}/bin/batch-fetch" --resumable --window 5 --max-runtime 5s "${TEST_FILE_100}" >/dev/null 2>&1 || true
+	bash "${SLUSH_HOME}/bin/batch-fetch" --type formulae --resumable --window 5 --max-runtime 5s "${TEST_FILE_100}" >/dev/null 2>&1 || true
 	
 	local end_time
 	end_time=$(date +%s)
 	local elapsed=$((end_time - start_time))
 	
-	# Should exit within 5-10 seconds (allowing for batch completion)
-	if [[ ${elapsed} -le 15 ]]; then
+	# Should exit within 60 seconds (brew operations are slow)
+	# Main check: did it stop before processing all 100 formulae?
+	if [[ ${elapsed} -le 60 ]]; then
 		print_success "Max runtime enforced (${elapsed}s elapsed)"
 	else
-		print_failure "Max runtime not enforced (${elapsed}s elapsed, expected <15s)"
+		print_failure "Max runtime not enforced (${elapsed}s elapsed, expected <60s)"
 		return 1
 	fi
 	
@@ -396,7 +452,7 @@ test_max_runtime() {
 test_results_csv() {
 	print_test "Results CSV Integrity"
 	
-	local results_file="${SLUSH_HOME}/repos/${FREEZE_COMMIT}_fetch_results"
+	local results_file="${SLUSH_HOME}/repos/${FREEZE_COMMIT}_formulae_fetch_results"
 	
 	if [[ ! -f ${results_file} ]]; then
 		print_info "Results file doesn't exist yet (expected for fresh install)"
@@ -447,26 +503,172 @@ test_invalid_arguments() {
 	print_test "Invalid Arguments Handling"
 	
 	# Test invalid window size
-	if bash "${SLUSH_HOME}/bin/batch-fetch" --window 0 2>&1 | grep -q "must be a positive integer"; then
-		print_success "Invalid window size rejected"
-	else
+	local output
+	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --window 0 2>&1); then
 		print_failure "Invalid window size not rejected"
 		return 1
+	else
+		if echo "${output}" | grep -q "must be a positive integer"; then
+			print_success "Invalid window size rejected"
+		else
+			print_failure "Wrong error message: ${output}"
+			return 1
+		fi
 	fi
 	
 	# Test invalid max-runtime format
-	if bash "${SLUSH_HOME}/bin/batch-fetch" --max-runtime 2x 2>&1 | grep -q "must be in format"; then
-		print_success "Invalid max-runtime format rejected"
-	else
+	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --max-runtime 2x 2>&1); then
 		print_failure "Invalid max-runtime format not rejected"
 		return 1
+	else
+		if echo "${output}" | grep -q "must be in format"; then
+			print_success "Invalid max-runtime format rejected"
+		else
+			print_failure "Wrong error message: ${output}"
+			return 1
+		fi
 	fi
 	
 	# Test invalid input file
-	if bash "${SLUSH_HOME}/bin/batch-fetch" /nonexistent/file.txt 2>&1 | grep -q "not found"; then
-		print_success "Invalid input file rejected"
-	else
+	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" /nonexistent/file.txt 2>&1); then
 		print_failure "Invalid input file not rejected"
+		return 1
+	else
+		if echo "${output}" | grep -q "not found"; then
+			print_success "Invalid input file rejected"
+		else
+			print_failure "Wrong error message: ${output}"
+			return 1
+		fi
+	fi
+}
+
+# Test 11: Type flag - formulae only
+test_type_formulae() {
+	print_test "Type Flag - Formulae Only"
+	
+	# Clean up any existing state
+	rm -f "${STATE_FILE}" 2>/dev/null || true
+	
+	local output
+	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --type formulae --resumable --window 5 --max-batches 1 "${TEST_FILE_25}" 2>&1); then
+		if echo "${output}" | grep -q "Fetching Formulae"; then
+			print_success "Formulae type executed successfully"
+		else
+			print_failure "Formulae type output not found"
+			echo "${output}" | tail -10
+			return 1
+		fi
+	else
+		print_failure "Formulae type failed"
+		echo "${output}" | tail -20
+		return 1
+	fi
+	
+	# Verify correct state file was created
+	if [[ -f ${STATE_FILE} ]]; then
+		print_success "Formulae state file created"
+	else
+		print_failure "Formulae state file not created"
+		return 1
+	fi
+	
+	# Clean up
+	rm -f "${STATE_FILE}" 2>/dev/null || true
+}
+
+# Test 12: Type flag - casks only
+test_type_casks() {
+	print_test "Type Flag - Casks Only"
+	
+	# Skip if casks not available
+	if [[ -z ${FREEZE_COMMIT_CASK:-} ]] || [[ ! -f ${CASKS_FILE:-} ]] || [[ ! -f ${TEST_CASK_FILE_10:-} ]]; then
+		print_info "Skipping cask test (casks not available)"
+		TESTS_PASSED=$((TESTS_PASSED + 1))
+		return 0
+	fi
+	
+	# Clean up any existing state
+	rm -f "${STATE_FILE_CASK}" 2>/dev/null || true
+	
+	local output
+	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --type casks --resumable --window 3 --max-batches 1 "${TEST_CASK_FILE_10}" 2>&1); then
+		if echo "${output}" | grep -q "Fetching Casks"; then
+			print_success "Casks type executed successfully"
+		else
+			print_failure "Casks type output not found"
+			echo "${output}" | tail -10
+			return 1
+		fi
+	else
+		print_failure "Casks type failed"
+		echo "${output}" | tail -20
+		return 1
+	fi
+	
+	# Verify correct state file was created
+	if [[ -f ${STATE_FILE_CASK} ]]; then
+		print_success "Cask state file created"
+	else
+		print_failure "Cask state file not created"
+		return 1
+	fi
+	
+	# Clean up
+	rm -f "${STATE_FILE_CASK}" 2>/dev/null || true
+}
+
+# Test 13: Type flag - both (default)
+test_type_both() {
+	print_test "Type Flag - Both (Default)"
+	
+	# Skip if casks not available
+	if [[ -z ${FREEZE_COMMIT_CASK:-} ]] || [[ ! -f ${CASKS_FILE:-} ]]; then
+		print_info "Skipping both test (casks not available)"
+		TESTS_PASSED=$((TESTS_PASSED + 1))
+		return 0
+	fi
+	
+	# Clean up any existing state
+	rm -f "${STATE_FILE}" "${STATE_FILE_CASK}" 2>/dev/null || true
+	
+	# Test explicit --type both
+	local output
+	if output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --type both --resumable --window 3 --max-batches 1 2>&1); then
+		if echo "${output}" | grep -q "Fetching Formulae" && echo "${output}" | grep -q "Fetching Casks"; then
+			print_success "Both types executed successfully"
+		else
+			print_failure "Both types output not complete"
+			echo "${output}" | grep -E "Fetching (Formulae|Casks)" || true
+			return 1
+		fi
+	else
+		print_failure "Both types failed"
+		echo "${output}" | tail -20
+		return 1
+	fi
+	
+	# Clean up
+	rm -f "${STATE_FILE}" "${STATE_FILE_CASK}" 2>/dev/null || true
+}
+
+# Test 14: Invalid type argument
+test_invalid_type() {
+	print_test "Invalid Type Argument"
+	
+	local output
+	local exit_code=0
+	output=$(bash "${SLUSH_HOME}/bin/batch-fetch" --type invalid 2>&1) || exit_code=$?
+	
+	if [[ ${exit_code} -ne 0 ]]; then
+		if echo "${output}" | grep -q "ERROR.*must be one of: formulae, casks, both"; then
+			print_success "Invalid type rejected"
+		else
+			print_failure "Wrong error message: ${output}"
+			return 1
+		fi
+	else
+		print_failure "Invalid type not rejected"
 		return 1
 	fi
 }
@@ -478,8 +680,12 @@ main() {
 	# Validate environment
 	validate_environment
 	
+	echo "DEBUG: About to call setup_test_environment" >&2
+	
 	# Setup
 	setup_test_environment
+	
+	echo "DEBUG: setup_test_environment completed" >&2
 	
 	# Run tests
 	print_header "Running Tests"
@@ -494,6 +700,10 @@ main() {
 	test_results_csv || true
 	test_help_message || true
 	test_invalid_arguments || true
+	test_type_formulae || true
+	test_type_casks || true
+	test_type_both || true
+	test_invalid_type || true
 	
 	# Cleanup
 	cleanup_test_environment

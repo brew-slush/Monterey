@@ -65,12 +65,21 @@ This will install Homebrew from the frozen repositories on the mounted share and
 
 ## Fetch Everything
 
-To fetch all bottles and casks into the archive, run the batch fetch script. This may take a long time and require a lot of disk space (up to 1 TB or more):
+To fetch all bottles and casks into the archive, run the batch fetch script. By default, it fetches both formulae (bottles) and casks. This may take a long time and require a lot of disk space (up to 1 TB or more):
 
 ### Basic Usage (Non-Resumable)
 
+By default, fetches both formulae and casks:
+
 ```bash
+# Fetch both formulae and casks (default)
 bash ${MOUNT_POINT}/bin/batch-fetch
+
+# Fetch only formulae
+bash ${MOUNT_POINT}/bin/batch-fetch --type formulae
+
+# Fetch only casks
+bash ${MOUNT_POINT}/bin/batch-fetch --type casks
 ```
 
 ### Resumable Mode for Cron Jobs
@@ -78,37 +87,182 @@ bash ${MOUNT_POINT}/bin/batch-fetch
 The script supports resumable mode which saves progress and allows you to stop and restart without losing work. Perfect for cron jobs that run during off-peak hours:
 
 ```bash
-# Enable resumable mode with 2-hour runtime limit
+# Enable resumable mode with 2-hour runtime limit (fetches both formulae and casks)
 bash ${MOUNT_POINT}/bin/batch-fetch --resumable --max-runtime 2h
+
+# Fetch only formulae
+bash ${MOUNT_POINT}/bin/batch-fetch --resumable --type formulae --max-runtime 2h
+
+# Fetch only casks
+bash ${MOUNT_POINT}/bin/batch-fetch --resumable --type casks --max-runtime 2h
 
 # Process specific number of batches then exit
 bash ${MOUNT_POINT}/bin/batch-fetch --resumable --max-batches 50
 
-# Reset state and start over
+# Reset state and start over (resets both formulae and casks state)
 bash ${MOUNT_POINT}/bin/batch-fetch --resumable --reset
 
 # Custom window size
 bash ${MOUNT_POINT}/bin/batch-fetch --resumable --window 20 --max-runtime 1h
 ```
 
-### Example Cron Schedule
+**Note:** When using `--type both` (the default), the script processes formulae first, then casks sequentially. Each type maintains its own state file, so you can stop and resume independently. The state files are named `.batch-fetch-state-formulae-<commit>` and `.batch-fetch-state-casks-<commit>` in the repos directory.
 
-Add to your crontab to fetch during specific times without disrupting your network:
+### Parallel Fetching with Multiple Machines
+
+The simplest and most effective way to speed up fetching with multiple machines is to have one machine fetch formulae while another fetches casks:
+
+```bash
+# Machine A - Fetch formulae only
+batch-fetch --resumable --type formulae --max-runtime 2h
+
+# Machine B - Fetch casks only
+batch-fetch --resumable --type casks --max-runtime 2h
+```
+
+**Why this works best:**
+- Each type has separate state and lock files (no conflicts)
+- No coordination overhead between machines
+- Roughly equal work distribution (~7127 formulae, ~7058 casks)
+- Both machines can run simultaneously without interference
+- Fully resumable if either machine stops
+
+**Why not more complex parallelization:**
+- Internet bandwidth is shared (adding more machines won't help)
+- SMB/NFS servers can become bottlenecks with multiple writers
+- Network filesystem locking is unreliable for complex coordination
+- The additional complexity isn't worth marginal gains
+
+This two-machine approach effectively doubles throughput while keeping the system simple and reliable.
+
+### Scheduling on macOS
+
+macOS supports both traditional cron and the modern launchd system. **launchd is recommended** as it's the native macOS way and more reliable.
+
+#### Option 1: Using launchd (Recommended)
+
+Create a launch agent plist file at `~/Library/LaunchAgents/com.monterey.batch-fetch.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.monterey.batch-fetch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Volumes/Monterey/bin/batch-fetch</string>
+        <string>--resumable</string>
+        <string>--max-runtime</string>
+        <string>2h</string>
+        <!-- Optional: add \-\-type formulae, \-\-type casks, or omit for both (default) -->
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <!-- Run at 6 PM daily -->
+        <dict>
+            <key>Hour</key>
+            <integer>18</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- Run at 11 PM on weekends -->
+        <dict>
+            <key>Weekday</key>
+            <integer>6</integer>
+            <key>Hour</key>
+            <integer>23</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>0</integer>
+            <key>Hour</key>
+            <integer>23</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>MOUNT_POINT</key>
+        <string>/Volumes/Monterey</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/batch-fetch.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/batch-fetch.error.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
+```
+
+Load the launch agent:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.monterey.batch-fetch.plist
+
+# Check if it's loaded
+launchctl list | grep monterey
+
+# Test run immediately
+launchctl start com.monterey.batch-fetch
+
+# View logs
+tail -f /tmp/batch-fetch.log
+
+# To unload/disable
+launchctl unload ~/Library/LaunchAgents/com.monterey.batch-fetch.plist
+```
+
+#### Option 2: Using cron (Legacy)
+
+While cron still works on macOS, you need to grant Terminal (or your terminal app) Full Disk Access in System Preferences → Security & Privacy → Privacy → Full Disk Access.
+
+Edit crontab:
+
+```bash
+crontab -e
+```
+
+Add schedule (note: use full paths):
 
 ```bash
 # Run for 1 hour at lunch time (12 PM) on weekdays
-0 12 * * 1-5 bash /Volumes/Monterey/bin/batch-fetch --resumable --max-runtime 1h
+0 12 * * 1-5 /bin/bash /Volumes/Monterey/bin/batch-fetch --resumable --max-runtime 1h
 
 # Run for 4 hours every evening (6 PM)
-0 18 * * * bash /Volumes/Monterey/bin/batch-fetch --resumable --max-runtime 4h
+0 18 * * * /bin/bash /Volumes/Monterey/bin/batch-fetch --resumable --max-runtime 4h
 
-# Run overnight (11 PM to 7 AM on weekends)
-0 23 * * 6,0 bash /Volumes/Monterey/bin/batch-fetch --resumable --max-runtime 8h
+# Run overnight (11 PM on weekends)
+0 23 * * 6,0 /bin/bash /Volumes/Monterey/bin/batch-fetch --resumable --max-runtime 8h
 ```
+
+View your crontab:
+
+```bash
+crontab -l
+```
+
+**macOS cron notes:**
+- Requires Full Disk Access permission for your terminal app
+- May not run if the Mac is asleep (use `pmset` or launchd for better reliability)
+- No output unless you redirect to a file: `>> /tmp/batch-fetch.log 2>&1`
 
 ### Network Considerations
 
 For network-friendly operation, consider:
 - Using `--max-runtime` to limit batch fetch duration during business hours
-- Running overnight or during off-peak times via cron
+- Running overnight or during off-peak times via scheduled tasks
 - Configuring QoS on your router (e.g., OpenWRT with SQM) to prioritize interactive traffic like video calls over bulk downloads

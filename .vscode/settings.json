@@ -9,6 +9,7 @@
     "NOARCH",
     "nodeps",
     "OUTROOT",
+    "pmset",
     "RUNDIR",
     "texinfo",
     "xattrs",
