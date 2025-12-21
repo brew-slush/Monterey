@@ -59,6 +59,21 @@ git clone --depth=1 file:///Volumes/Monterey/repos/homebrew-core \
 	/usr/local/Homebrew/Library/Taps/homebrew/homebrew-core
 cd /usr/local/Homebrew/Library/Taps/homebrew/homebrew-core || exit
 git config advice.detachedHead false
+
+# Get the core commit hash and apply patches if available
+CORE_HASH=$(git rev-parse --short=11 HEAD)
+CORE_PATCH="/Volumes/Monterey/repos/core-diffs-for-${CORE_HASH}"
+if [ -f "$CORE_PATCH" ] && [ -s "$CORE_PATCH" ]; then
+	echo "==> Applying patches to homebrew-core from $(basename "$CORE_PATCH")..."
+	if git apply "$CORE_PATCH"; then
+		echo "==> Core patches applied successfully"
+	else
+		echo "WARNING: Failed to apply core patches"
+	fi
+else
+	echo "==> No core patches to apply (file empty or not found: $CORE_PATCH)"
+fi
+
 cd || exit
 
 echo "==> Verifying tap..."
@@ -70,6 +85,21 @@ git clone file:///Volumes/Monterey/repos/homebrew-cask \
 	/usr/local/Homebrew/Library/Taps/homebrew/homebrew-cask
 cd /usr/local/Homebrew/Library/Taps/homebrew/homebrew-cask || exit
 git config advice.detachedHead false
+
+# Get the cask commit hash and apply patches if available
+CASK_HASH=$(git rev-parse --short=11 HEAD)
+CASK_PATCH="/Volumes/Monterey/repos/cask-diffs-for-${CASK_HASH}"
+if [ -f "$CASK_PATCH" ] && [ -s "$CASK_PATCH" ]; then
+	echo "==> Applying patches to homebrew-cask from $(basename "$CASK_PATCH")..."
+	if git apply "$CASK_PATCH"; then
+		echo "==> Cask patches applied successfully"
+	else
+		echo "WARNING: Failed to apply cask patches"
+	fi
+else
+	echo "==> No cask patches to apply (file empty or not found: $CASK_PATCH)"
+fi
+
 cd || exit
 
 echo "==> Running brew doctor..."

@@ -31,7 +31,6 @@ md5deep,true,false,false,
 node@16,true,false,false,
 pce,true,false,false,
 sysstat,false,false,false,
-texinfo,false,false,false,Invalid OS condition: :high_sierra
 tmux,true,false,false,
 tmux-xpanes,true,false,false,
 tmuxinator,true,false,false,
