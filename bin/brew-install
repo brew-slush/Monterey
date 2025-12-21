@@ -31,7 +31,8 @@ sudo chown -R "$(whoami)":wheel "${HOMEBREW_REPOSITORY}" "${HOMEBREW_PREFIX}"/{b
 
 echo "==> Cloning Homebrew repository..."
 # Clone from your local repository
-git clone --depth=1 file:///Volumes/Monterey/repos/homebrew /usr/local/Homebrew
+BREW_SLUSH_HOME="${BREW_SLUSH_HOME:-/Volumes/BrewSlush/Monterey}"
+git clone --depth=1 "file://${BREW_SLUSH_HOME}/repos/homebrew" /usr/local/Homebrew
 cd /usr/local/Homebrew || exit
 git config advice.detachedHead false
 cd || exit
@@ -47,7 +48,7 @@ if [[ ! ${PATH} =~ "/usr/local/bin" ]]; then
 	echo 'export PATH="/usr/local/bin:${PATH}"' >>~/.zshrc
 fi
 
-cat /Volumes/Monterey/zshrc.example >>~/.zshrc
+cat "${BREW_SLUSH_HOME}/zshrc.example" >>~/.zshrc
 
 echo "==> Creating taps directory structure..."
 # Create taps directory structure
@@ -55,14 +56,14 @@ mkdir -p /usr/local/Homebrew/Library/Taps/homebrew
 
 echo "==> Cloning homebrew-core tap..."
 # Clone homebrew-core from your share
-git clone --depth=1 file:///Volumes/Monterey/repos/homebrew-core \
+git clone --depth=1 "file://${BREW_SLUSH_HOME}/repos/homebrew-core" \
 	/usr/local/Homebrew/Library/Taps/homebrew/homebrew-core
 cd /usr/local/Homebrew/Library/Taps/homebrew/homebrew-core || exit
 git config advice.detachedHead false
 
 # Get the core commit hash and apply patches if available
 CORE_HASH=$(git rev-parse --short=11 HEAD)
-CORE_PATCH="/Volumes/Monterey/repos/core-diffs-for-${CORE_HASH}"
+CORE_PATCH="${BREW_SLUSH_HOME}/repos/core-diffs-for-${CORE_HASH}"
 if [ -f "$CORE_PATCH" ] && [ -s "$CORE_PATCH" ]; then
 	echo "==> Applying patches to homebrew-core from $(basename "$CORE_PATCH")..."
 	if git apply "$CORE_PATCH"; then
@@ -81,14 +82,14 @@ echo "==> Verifying tap..."
 brew tap
 
 echo "==> Cloning homebrew-cask tap..."
-git clone file:///Volumes/Monterey/repos/homebrew-cask \
+git clone "file://${BREW_SLUSH_HOME}/repos/homebrew-cask" \
 	/usr/local/Homebrew/Library/Taps/homebrew/homebrew-cask
 cd /usr/local/Homebrew/Library/Taps/homebrew/homebrew-cask || exit
 git config advice.detachedHead false
 
 # Get the cask commit hash and apply patches if available
 CASK_HASH=$(git rev-parse --short=11 HEAD)
-CASK_PATCH="/Volumes/Monterey/repos/cask-diffs-for-${CASK_HASH}"
+CASK_PATCH="${BREW_SLUSH_HOME}/repos/cask-diffs-for-${CASK_HASH}"
 if [ -f "$CASK_PATCH" ] && [ -s "$CASK_PATCH" ]; then
 	echo "==> Applying patches to homebrew-cask from $(basename "$CASK_PATCH")..."
 	if git apply "$CASK_PATCH"; then

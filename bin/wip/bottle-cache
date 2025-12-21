@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-MOUNT_DIR="${MOUNT_DIR:-/Volumes/Monterey}"
+BREW_SLUSH_HOME="${BREW_SLUSH_HOME:-/Volumes/BrewSlush/Monterey}"
 
 INSTALLED="$(brew list --formula)"
 TMP_FILE="$(mktemp /tmp/built_bottles.XXXXXX)"
@@ -78,9 +78,9 @@ echo "\${BUILT} = ${BUILT}"
 # Determine architecture-specific cache directory
 ARCH=$(uname -m)
 if [[ ${ARCH} == "x86_64" ]]; then
-	CACHE_DIR="${MOUNT_DIR}/cache/Intel/homebrew-cache"
+	CACHE_DIR="${BREW_SLUSH_HOME}/cache/Intel/homebrew-cache"
 elif [[ ${ARCH} == "arm64" ]]; then
-	CACHE_DIR="${MOUNT_DIR}/cache/ARM/homebrew-cache"
+	CACHE_DIR="${BREW_SLUSH_HOME}/cache/ARM/homebrew-cache"
 else
 	echo "ERROR: Unknown architecture ${ARCH}"
 	exit 1

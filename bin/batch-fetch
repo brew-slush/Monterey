@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 START_TIME=$(date +%s)
-MOUNT_DIR="${MOUNT_DIR:-/Volumes/Monterey}"
+BREW_SLUSH_HOME="${BREW_SLUSH_HOME:-/Volumes/BrewSlush/Monterey}"
 export HOMEBREW_NO_ENV_HINTS=1
 
 # Default options
@@ -118,7 +118,7 @@ fi
 # Get freeze commits
 get_freeze_commits() {
 	# Homebrew core (formulae)
-	HOMEBREW_CORE_DIR="${MOUNT_DIR}/repos/homebrew-core"
+	HOMEBREW_CORE_DIR="${BREW_SLUSH_HOME}/repos/homebrew-core"
 	if [[ -d ${HOMEBREW_CORE_DIR} ]]; then
 		FREEZE_COMMIT_CORE=$(cd "${HOMEBREW_CORE_DIR}" && git rev-parse --short HEAD 2>/dev/null)
 		if [[ -z ${FREEZE_COMMIT_CORE} ]]; then
@@ -127,7 +127,7 @@ get_freeze_commits() {
 	fi
 
 	# Homebrew cask (casks)
-	HOMEBREW_CASK_DIR="${MOUNT_DIR}/repos/homebrew-cask"
+	HOMEBREW_CASK_DIR="${BREW_SLUSH_HOME}/repos/homebrew-cask"
 	if [[ -d ${HOMEBREW_CASK_DIR} ]]; then
 		FREEZE_COMMIT_CASK=$(cd "${HOMEBREW_CASK_DIR}" && git rev-parse --short HEAD 2>/dev/null)
 		if [[ -z ${FREEZE_COMMIT_CASK} ]]; then
@@ -148,12 +148,12 @@ fetch_type() {
 	
 	if [[ ${type} == "formulae" ]]; then
 		freeze_commit="${FREEZE_COMMIT_CORE}"
-		default_index="${MOUNT_DIR}/repos/${freeze_commit}_all"
+		default_index="${BREW_SLUSH_HOME}/repos/${freeze_commit}_all"
 		fetch_cmd_prefix="brew fetch --deps"
 		type_label="Formulae"
 	else
 		freeze_commit="${FREEZE_COMMIT_CASK}"
-		default_index="${MOUNT_DIR}/repos/${freeze_commit}_casks_all"
+		default_index="${BREW_SLUSH_HOME}/repos/${freeze_commit}_casks_all"
 		fetch_cmd_prefix="brew fetch --cask"
 		type_label="Casks"
 	fi
@@ -170,8 +170,8 @@ fetch_type() {
 	echo ""
 
 	# State file for resumable mode
-	STATE_FILE="${MOUNT_DIR}/repos/.batch-fetch-state-${type}-${freeze_commit}"
-	LOCK_FILE="${MOUNT_DIR}/repos/.batch-fetch-lock-${type}-${freeze_commit}"
+	STATE_FILE="${BREW_SLUSH_HOME}/repos/.batch-fetch-state-${type}-${freeze_commit}"
+	LOCK_FILE="${BREW_SLUSH_HOME}/repos/.batch-fetch-lock-${type}-${freeze_commit}"
 
 	# Lock file management
 	acquire_lock() {
@@ -282,7 +282,7 @@ fetch_type() {
 	batches_completed=$(echo "${state_data}" | cut -d'|' -f2)
 
 	# Initialize CSV results file
-	FETCH_RESULTS="${MOUNT_DIR}/repos/${freeze_commit}_${type}_fetch_results"
+	FETCH_RESULTS="${BREW_SLUSH_HOME}/repos/${freeze_commit}_${type}_fetch_results"
 	FETCH_RESULTS_NEW=$(mktemp)
 
 	if [[ ! -f ${FETCH_RESULTS} ]]; then
@@ -547,24 +547,67 @@ fetch_type() {
 
 	# Summary
 	echo "" >&2
-	echo "=== ${type_label} Summary ===" >&2
+	echo "═══════════════════════════════════════════════════════════════" >&2
+	echo "  ${type_label} Fetch Summary" >&2
+	echo "═══════════════════════════════════════════════════════════════" >&2
+	
 	TOTAL_RESULTS=$(grep -v '^#' "${FETCH_RESULTS}" | wc -l | tr -d ' ')
-	echo "Results saved to: ${FETCH_RESULTS}" >&2
-	echo "Total ${type} processed: ${TOTAL_RESULTS}" >&2
-	echo "Batches processed this run: ${batches_processed}" >&2
-
+	
+	if [[ ${type} == "formulae" ]]; then
+		SUCCESSFUL=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$2=="true"' | wc -l | tr -d ' ')
+		FAILED=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$2=="false"' | wc -l | tr -d ' ')
+		NO_BOTTLE=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$5~/No bottle/' | wc -l | tr -d ' ')
+	else
+		SUCCESSFUL=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$2=="true"' | wc -l | tr -d ' ')
+		FAILED=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$2=="false"' | wc -l | tr -d ' ')
+	fi
+	
+	echo "Timestamp: $(date)" >&2
+	echo "Freeze commit: ${freeze_commit}" >&2
+	echo "" >&2
+	echo "Results:" >&2
+	echo "  Total ${type} in index: $(wc -l < "${INPUT_FILE}" | tr -d ' ')" >&2
+	echo "  Total processed: ${TOTAL_RESULTS}" >&2
+	echo "  Successfully fetched: ${SUCCESSFUL}" >&2
+	echo "  Failed: ${FAILED}" >&2
+	if [[ ${type} == "formulae" ]] && [[ ${NO_BOTTLE} -gt 0 ]]; then
+		echo "  No bottle available: ${NO_BOTTLE}" >&2
+	fi
+	echo "" >&2
+	echo "This run:" >&2
+	echo "  Batches processed: ${batches_processed}" >&2
+	echo "  Total batches completed: $((batches_completed + batches_processed))" >&2
+	if [[ -n ${MAX_RUNTIME} ]]; then
+		local run_elapsed=$(($(date +%s) - START_TIME))
+		echo "  Runtime: ${run_elapsed}s / ${MAX_RUNTIME_SECONDS}s max" >&2
+	fi
+	echo "" >&2
+	echo "Output files:" >&2
+	echo "  Results: ${FETCH_RESULTS}" >&2
+	
 	if [[ ${RESUMABLE} == true ]]; then
 		if [[ -f ${STATE_FILE} ]]; then
-			echo "State saved to: ${STATE_FILE}" >&2
-			echo "Run again to resume from line $((end + 1))" >&2
+			echo "  State: ${STATE_FILE}" >&2
+			echo "" >&2
+			echo "Status: INCOMPLETE - Run again to resume from line $((end + 1))" >&2
+		else
+			echo "" >&2
+			echo "Status: COMPLETE - All ${type} processed!" >&2
 		fi
+	else
+		echo "" >&2
+		echo "Status: COMPLETE - Processed lines ${start_line} to ${end}" >&2
 	fi
+	
+	echo "═══════════════════════════════════════════════════════════════" >&2
 
 	release_lock
 }
 
 # Main execution
 echo "Fetch type: ${FETCH_TYPE}"
+echo "Start time: $(date)"
+echo ""
 
 case ${FETCH_TYPE} in
 	formulae)
@@ -579,13 +622,70 @@ case ${FETCH_TYPE} in
 		FORMULAE_RESULT=$?
 		fetch_type "casks"
 		CASKS_RESULT=$?
+		
+		# Overall summary for both
+		echo "" >&2
+		echo "═══════════════════════════════════════════════════════════════" >&2
+		echo "  Overall Summary - Both Formulae & Casks" >&2
+		echo "═══════════════════════════════════════════════════════════════" >&2
+		echo "End time: $(date)" >&2
+		elapsed=$(($(date +%s) - START_TIME))
+		echo "Total runtime: ${elapsed}s ($((elapsed / 60))m $((elapsed % 60))s)" >&2
+		if [[ -n ${MAX_RUNTIME} ]]; then
+			echo "Max runtime limit: ${MAX_RUNTIME}" >&2
+		fi
+		echo "" >&2
+		
+		# Formulae stats
+		if [[ -f "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CORE}_formulae_fetch_results" ]]; then
+			FORMULAE_TOTAL=$(grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CORE}_formulae_fetch_results" | wc -l | tr -d ' ')
+			FORMULAE_SUCCESS=$(grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CORE}_formulae_fetch_results" | awk -F',' '$2=="true"' | wc -l | tr -d ' ')
+			FORMULAE_FAILED=$(grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CORE}_formulae_fetch_results" | awk -F',' '$2=="false"' | wc -l | tr -d ' ')
+			echo "Formulae:" >&2
+			echo "  Processed: ${FORMULAE_TOTAL}" >&2
+			echo "  Successful: ${FORMULAE_SUCCESS}" >&2
+			echo "  Failed: ${FORMULAE_FAILED}" >&2
+			echo "" >&2
+		fi
+		
+		# Casks stats
+		if [[ -f "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CASK}_casks_fetch_results" ]]; then
+			CASKS_TOTAL=$(grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CASK}_casks_fetch_results" | wc -l | tr -d ' ')
+			CASKS_SUCCESS=$(grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CASK}_casks_fetch_results" | awk -F',' '$2=="true"' | wc -l | tr -d ' ')
+			CASKS_FAILED=$(grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CASK}_casks_fetch_results" | awk -F',' '$2=="false"' | wc -l | tr -d ' ')
+			echo "Casks:" >&2
+			echo "  Processed: ${CASKS_TOTAL}" >&2
+			echo "  Successful: ${CASKS_SUCCESS}" >&2
+			echo "  Failed: ${CASKS_FAILED}" >&2
+			echo "" >&2
+		fi
+		
+		COMBINED_SUCCESS=$((${FORMULAE_SUCCESS:-0} + ${CASKS_SUCCESS:-0}))
+		COMBINED_FAILED=$((${FORMULAE_FAILED:-0} + ${CASKS_FAILED:-0}))
+		COMBINED_TOTAL=$((${FORMULAE_TOTAL:-0} + ${CASKS_TOTAL:-0}))
+		
+		echo "Combined totals:" >&2
+		echo "  Total processed: ${COMBINED_TOTAL}" >&2
+		echo "  Successful: ${COMBINED_SUCCESS}" >&2
+		echo "  Failed: ${COMBINED_FAILED}" >&2
+		
+		if [[ ${COMBINED_TOTAL} -gt 0 ]]; then
+			SUCCESS_RATE=$((COMBINED_SUCCESS * 100 / COMBINED_TOTAL))
+			echo "  Success rate: ${SUCCESS_RATE}%" >&2
+		fi
+		
+		echo "═══════════════════════════════════════════════════════════════" >&2
+		
 		if [[ ${FORMULAE_RESULT} -ne 0 ]] || [[ ${CASKS_RESULT} -ne 0 ]]; then
 			exit 1
 		fi
 		;;
 esac
 
-# Final elapsed time
-elapsed=$(($(date +%s) - START_TIME))
-echo "" >&2
-echo "Total runtime: ${elapsed} seconds ($((elapsed / 60)) minutes)" >&2
+# Final elapsed time if not already shown
+if [[ ${FETCH_TYPE} != "both" ]]; then
+	elapsed=$(($(date +%s) - START_TIME))
+	echo "" >&2
+	echo "End time: $(date)" >&2
+	echo "Total runtime: ${elapsed}s ($((elapsed / 60))m $((elapsed % 60))s)" >&2
+fi

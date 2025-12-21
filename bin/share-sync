@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+
+# Temporary utility to sync git-tracked files from /Volumes/Monterey to /Volumes/BrewSlush/Monterey
+
+set -e
+
+SOURCE="/Volumes/Monterey"
+DEST="/Volumes/BrewSlush/Monterey"
+
+# Colors for output
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "  Git-Tracked Files Sync"
+echo "  Source: ${SOURCE}"
+echo "  Dest:   ${DEST}"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+
+# Check if source exists
+if [ ! -d "$SOURCE" ]; then
+    echo "ERROR: Source directory not found: $SOURCE"
+    exit 1
+fi
+
+# Check if source is a git repo
+if [ ! -d "$SOURCE/.git" ]; then
+    echo "ERROR: Source is not a git repository: $SOURCE"
+    exit 1
+fi
+
+# Create destination if it doesn't exist
+if [ ! -d "$DEST" ]; then
+    echo -e "${YELLOW}Creating destination directory: ${DEST}${NC}"
+    mkdir -p "$DEST"
+fi
+
+echo -e "${BLUE}Syncing git-tracked files from bin, docs, tests, and cache...${NC}"
+echo ""
+
+# Get list of tracked files from specific directories
+cd "$SOURCE"
+FILE_COUNT=0
+COPIED_COUNT=0
+
+# Directories to sync (git-managed)
+SYNC_DIRS=("bin" "docs" "tests" "cache")
+
+for dir in "${SYNC_DIRS[@]}"; do
+	if [ -d "$SOURCE/$dir" ]; then
+		echo -e "${BLUE}Processing ${dir}/...${NC}"
+		
+		# Copy git-tracked files from this directory
+		while IFS= read -r file; do
+			if [ -n "$file" ]; then
+				FILE_COUNT=$((FILE_COUNT + 1))
+				
+				# Create destination directory if needed
+				dest_dir="$DEST/$(dirname "$file")"
+				mkdir -p "$dest_dir"
+				
+				# Copy file
+				if cp "$SOURCE/$file" "$DEST/$file" 2>/dev/null; then
+					COPIED_COUNT=$((COPIED_COUNT + 1))
+				else
+					echo -e "${YELLOW}⚠${NC} Skipped: $file"
+				fi
+			fi
+		done < <(git ls-files "$dir")
+		
+		echo -e "${GREEN}✓${NC} Copied ${COPIED_COUNT} files from ${dir}/"
+	fi
+done
+
+# Also copy top-level git-tracked files (like Readme.md, zshrc.example, etc.)
+echo -e "${BLUE}Processing top-level files...${NC}"
+while IFS= read -r file; do
+	if [[ "$file" != */* ]]; then  # Only files in root, not in subdirectories
+		FILE_COUNT=$((FILE_COUNT + 1))
+		
+		if cp "$SOURCE/$file" "$DEST/$file" 2>/dev/null; then
+			COPIED_COUNT=$((COPIED_COUNT + 1))
+		else
+			echo -e "${YELLOW}⚠${NC} Skipped: $file"
+		fi
+    fi
+done < <(git ls-files)
+
+echo ""
+echo -e "${GREEN}✓ Copied ${COPIED_COUNT} of ${FILE_COUNT} tracked files${NC}"
+echo -e "  (from bin/, docs/, tests/, cache/, and top-level files)"
+echo ""
+
+echo ""
+echo "Summary:"
+echo "  • Copied ${COPIED_COUNT} git-tracked files from bin/, docs/, tests/, cache/"
+echo ""
+echo "You can now use: ${DEST}"
