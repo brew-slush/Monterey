@@ -1,17 +1,18 @@
-MONTEREY_SHARE=/Volumes/Monterey
+BREW_SLUSH_HOME=/Volumes/Monterey
+export BREW_SLUSH_HOME
 
 # MS short for Monterey Share not Microsoft :-)
-MS_BIN="${MONTEREY_SHARE}/bin"
-MS_DRIVERS="${MONTEREY_SHARE}/drivers"
+MS_BIN="${BREW_SLUSH_HOME}/bin"
+MS_DRIVERS="${BREW_SLUSH_HOME}/drivers"
 MS_DRIVERS_ARM="${MS_DRIVERS}/ARM"
 MS_DRIVERS_INTEL="${MS_DRIVERS}/Intel"
-MS_CACHE="${MONTEREY_SHARE}/cache"
+MS_CACHE="${BREW_SLUSH_HOME}/cache"
 MS_CACHE_ARM="${MS_CACHE}/ARM"
 MS_CACHE_INTEL="${MS_CACHE}/Intel"
-MS_REPOS="${MONTEREY_SHARE}/repos"
+MS_REPOS="${BREW_SLUSH_HOME}/repos"
 MS_REPOS_BREW="${MS_REPOS}/homebrew"
 MS_REPOS_CORE="${MS_REPOS}/homebrew-core"
-MS_SOFTWARE="${MONTEREY_SHARE}/software"
+MS_SOFTWARE="${BREW_SLUSH_HOME}/software"
 MS_SOFTWARE_ARM="${MS_SOFTWARE}/ARM"
 MS_SOFTWARE_INTEL="${MS_SOFTWARE}/Intel"
 MS_SOFTWARE_NOARCH="${MS_SOFTWARE}/Noarch"
@@ -43,8 +44,7 @@ export HOMEBREW_NO_WARNINGS=1
 # CACHE_ENABLE="false"
 # if [[ "${CACHE_ENABLE}" == "true" ]]; then
   export HOMEBREW_NO_INSTALL_CLEANUP=1
-  export HOMEBREW_CACHE="/Volumes/Monterey/cache/${PROC}/homebrew-cache"
-  # export HOMEBREW_CELLAR="/Volumes/Monterey/cache/${PROC}/homebrew-cellar"
+  export HOMEBREW_CACHE="${BREW_SLUSH_HOME}/cache/${PROC}/homebrew-cache"
+  # export HOMEBREW_CELLAR="${BREW_SLUSH_HOME}/cache/${PROC}/homebrew-cellar"
 # fi
 
-export PATH="/usr/local/bin:$PATH"
