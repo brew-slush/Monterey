@@ -511,6 +511,14 @@ if [[ "${CLEAN}" == "yes" ]]; then
   else
     echo "[+] CLEAN MODE (post-backup)"
   fi
+  echo "[+] Ensuring permissions for Homebrew paths"
+  /usr/bin/sudo /usr/sbin/chown -R "$(/usr/bin/whoami)":admin \
+    /usr/local/Caskroom \
+    /usr/local/Cellar \
+    /usr/local/Homebrew \
+    /usr/local/opt \
+    /usr/local/var/homebrew \
+    2>/dev/null || true
   TEMP_CACHE="$(/usr/bin/mktemp -d)"
   echo "  Using temp cache for uninstall: ${TEMP_CACHE}"
   echo "  Invoking Homebrew official uninstall"
@@ -549,6 +557,10 @@ if [[ "${CLEAN}" == "yes" ]]; then
     echo "  Manifest deletions complete"
   else
     echo "  NOTE: Manifest produced no paths to delete"
+  fi
+
+  if [[ -d "/usr/local/Caskroom" ]]; then
+    /usr/bin/sudo /bin/rm -rf /usr/local/Caskroom
   fi
 
   echo "[+] Clean complete — system returned to pre-Homebrew state"
