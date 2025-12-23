@@ -16,6 +16,25 @@ exec > >(/usr/bin/tee "${LOGFILE}") 2>&1
 # shellcheck disable=SC2312
 echo "==> brew-install started at $(/bin/date)"
 
+# Optional CLI arguments
+USER_BREWFILE=""
+while [[ "$#" -gt 0 ]]; do
+	case "$1" in
+		--brewfile)
+			if [[ -z "$2" ]]; then
+				echo "ERROR: --brewfile requires a path argument"
+				exit 1
+			fi
+			USER_BREWFILE="$2"
+			shift 2
+			;;
+		*)
+			echo "ERROR: Unknown argument: $1"
+			exit 1
+			;;
+	esac
+done
+
 # Can't have the shell be a Homebrew-installed shell during installation
 DSCL_OUTPUT=$(/usr/bin/dscl . -read /Users/"$(/usr/bin/whoami)" UserShell) || true
 ORIGINAL_SHELL=$(echo "${DSCL_OUTPUT}" | /usr/bin/awk '{print $2}')
@@ -245,6 +264,15 @@ if [[ -d "${BACKUP_ROOT}" ]]; then
 	LATEST_BACKUP="$(/bin/ls -1dt "${BACKUP_ROOT}"/[0-9T]*/ 2>/dev/null | /usr/bin/head -1)" || true
 	if [[ -n "${LATEST_BACKUP}" && -f "${LATEST_BACKUP}/Brewfile" ]]; then
 		BREWFILE="${LATEST_BACKUP}/Brewfile"
+	fi
+fi
+
+if [[ -z "${BREWFILE}" && -n "${USER_BREWFILE}" ]]; then
+	if [[ -f "${USER_BREWFILE}" ]]; then
+		BREWFILE="${USER_BREWFILE}"
+		echo "==> Using Brewfile provided via --brewfile: ${BREWFILE}"
+	else
+		echo "WARNING: Brewfile provided via --brewfile not found: ${USER_BREWFILE}"
 	fi
 fi
 
