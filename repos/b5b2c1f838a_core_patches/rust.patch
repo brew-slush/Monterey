@@ -1,0 +1,12 @@
+diff --git a/Formula/r/rust.rb b/Formula/r/rust.rb
+index d9cc729..4ee4f90 100644
+--- a/Formula/r/rust.rb
++++ b/Formula/r/rust.rb
+@@ -35,7 +35,6 @@ class Rust < Formula
+   depends_on "libgit2@1.7"
+   depends_on "libssh2"
+   depends_on "llvm"
+-  depends_on macos: :sierra
+   depends_on "openssl@3"
+   depends_on "pkg-config"
+ 

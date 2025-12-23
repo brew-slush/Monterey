@@ -6,3 +6,5 @@ drivers
 repos
 software
 .DS_Store
+.fseventsd
+backups

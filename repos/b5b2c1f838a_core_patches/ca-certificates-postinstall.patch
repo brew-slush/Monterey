@@ -1,0 +1,131 @@
+diff --git a/Formula/c/ca-certificates.rb b/Formula/c/ca-certificates.rb
+index 32bef46..8902aca 100644
+--- a/Formula/c/ca-certificates.rb
++++ b/Formula/c/ca-certificates.rb
+@@ -27,97 +27,40 @@ class CaCertificates < Formula
+   end
+ 
+   def macos_post_install
+-    ohai "Regenerating CA certificate bundle from keychain, this may take a while..."
+-
+-    keychains = %w[
+-      /Library/Keychains/System.keychain
+-      /System/Library/Keychains/SystemRootCertificates.keychain
+-    ]
+-
+-    certs_list = Utils.safe_popen_read("/usr/bin/security", "find-certificate", "-a", "-p", *keychains)
+-    certs = certs_list.scan(
+-      /-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/m,
+-    )
+-
+-    # Check that the certificate has not expired
+-    valid_certs = certs.select do |cert|
+-      begin
+-        Utils.safe_popen_write("/usr/bin/openssl", "x509", "-inform", "pem",
+-                                                           "-checkend", "0",
+-                                                           "-noout") do |openssl_io|
+-          openssl_io.write(cert)
+-        end
+-      rescue ErrorDuringExecution
+-        # Expired likely.
+-        next
+-      end
+-
+-      # Only include certs that have are designed to act as a SSL root.
+-      purpose = Utils.safe_popen_write("/usr/bin/openssl", "x509", "-inform", "pem",
+-                                                                   "-purpose",
+-                                                                   "-noout") do |openssl_io|
+-        openssl_io.write(cert)
++    pkgshare = HOMEBREW_PREFIX/"share/ca-certificates"
++    etcdir =  HOMEBREW_PREFIX/"etc/ca-certificates"
++    bundle = etcdir/"cert.pem"
++
++    etcdir.mkpath
++
++    # ------------------------------------------------------------------
++    # 1.  Try the native Keychain extraction (works on ≤ Big Sur and on
++    #     Monterey when the user has granted Full-Disk Access).
++    # ------------------------------------------------------------------
++    system_formula = Formula["ca-certificates"]
++    keychain_script = system_formula.opt_bin/"ca-certificates-bundle-gen"
++    ohai "Regenerating CA certificate bundle from keychain…"
++
++    # Monterey sometimes hangs or exits 1; give it a short timeout.
++    succeeded = begin
++      Timeout.timeout(30) do
++        system(keychain_script.to_s, bundle.to_s)
+       end
+-      purpose.include?("SSL server CA : Yes")
++    rescue Timeout::Error
++      false
+     end
+ 
+-    # Check that the certificate is trusted in keychain
+-    trusted_certs = begin
+-      tmpfile = Tempfile.new
+-
+-      verify_args = %W[
+-        -l -L
+-        -c #{tmpfile.path}
+-        -p ssl
+-      ]
+-      on_high_sierra :or_newer do
+-        verify_args << "-R" << "offline"
+-      end
+-
+-      valid_certs.select do |cert|
+-        tmpfile.rewind
+-        tmpfile.write cert
+-        tmpfile.truncate cert.size
+-        tmpfile.flush
+-        Utils.safe_popen_read("/usr/bin/security", "verify-cert", *verify_args)
+-        true
+-      rescue ErrorDuringExecution
+-        # Invalid.
+-        false
+-      end
+-    ensure
+-      tmpfile&.close!
++    # ------------------------------------------------------------------
++    # 2.  If we are on Monterey and the Keychain step failed, quietly
++    #     copy the Mozilla bundle that Homebrew already ships.
++    # ------------------------------------------------------------------
++    if !succeeded && MacOS.version == :monterey
++      ohai "Keychain extraction failed on Monterey; using bundled Mozilla CA list"
++      cp pkgshare/"cacert.pem", bundle
+     end
+ 
+-    # Get SHA256 fingerprints for all trusted certs
+-    fingerprints = trusted_certs.to_set do |cert|
+-      Utils.safe_popen_write("/usr/bin/openssl", "x509", "-inform", "pem",
+-                                                         "-fingerprint",
+-                                                         "-sha256",
+-                                                         "-noout") do |openssl_io|
+-        openssl_io.write(cert)
+-      end
+-    end
+-
+-    # Now process Mozilla certs we downloaded.
+-    pem_certs_list = File.read(pkgshare/"cacert.pem")
+-    pem_certs = pem_certs_list.scan(
+-      /-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/m,
+-    )
+-
+-    # Append anything new.
+-    trusted_certs += pem_certs.select do |cert|
+-      fingerprint = Utils.safe_popen_write("/usr/bin/openssl", "x509", "-inform", "pem",
+-                                                                       "-fingerprint",
+-                                                                       "-sha256",
+-                                                                       "-noout") do |openssl_io|
+-        openssl_io.write(cert)
+-      end
+-      fingerprints.add?(fingerprint)
+-    end
+-
+-    pkgetc.mkpath
+-    (pkgetc/"cert.pem").atomic_write(trusted_certs.join("\n") << "\n")
++    # Ensure sane permissions no matter which path we took.
++    chmod 0644, bundle
+   end
+ 
+   def linux_post_install
