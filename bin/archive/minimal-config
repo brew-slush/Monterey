@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 export HOMEBREW_PREFIX="/usr/local"
 export HOMEBREW_REPOSITORY="${HOMEBREW_PREFIX}/Homebrew"
@@ -9,4 +9,3 @@ export HOMEBREW_CORE_GIT_REMOTE="file:///Volumes/Monterey/repos/homebrew-core"
 export HOMEBREW_NO_INSTALL_FROM_API=1
 export HOMEBREW_NO_AUTO_UPDATE=1
 export HOMEBREW_NO_ANALYTICS=1
-

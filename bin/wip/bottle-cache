@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 BREW_SLUSH_HOME="${BREW_SLUSH_HOME:-/Volumes/BrewSlush/Monterey}"
 
@@ -16,12 +16,12 @@ TMP_FILE="$(mktemp /tmp/built_bottles.XXXXXX)"
 
 cache_bottle_verify() {
 	src_bottle="${1}"
-	if [[ -z ${src_bottle} ]]; then
+	if [[ -z "${src_bottle}" ]]; then
 		echo "Usage: ${0} /path/to/<formula>-<ver>.<tag>.bottle.tar.gz"
 		return 1
 	fi
 
-	if [[ ! -f ${src_bottle} ]]; then
+	if [[ ! -f "${src_bottle}" ]]; then
 		echo "ERROR: Bottle file '${src_bottle}' not found"
 		return 1
 	fi
@@ -29,9 +29,9 @@ cache_bottle_verify() {
 	# Derive formula name from the filename to pass to brew --cache
 	filename=$(basename "${src_bottle}")
 	# brew --cache --force-bottle (or --build-from-source) will show canonical cache path
-	dst="$(brew --cache --force-bottle "${filename}" 2>/dev/null)"
+	dst="$(brew --cache --force-bottle ""${filename}"" 2>/dev/null)"
 
-	if [[ ! ${dst} ]]; then
+	if [[ ! "${dst}" ]]; then
 		echo "ERROR: brew did not output a cache path. Check formula name/version/tag in filename."
 		return 2
 	fi
@@ -49,7 +49,7 @@ cache_bottle_verify() {
 
 	# If there is a manifest (JSON) file alongside the bottle, copy it too.
 	manifest_src="${src_bottle%.tar.gz}.bottle_manifest.json"
-	if [[ -f ${manifest_src} ]]; then
+	if [[ -f "${manifest_src}" ]]; then
 		dst_manifest="${dst%.tar.gz}.bottle_manifest.json"
 		if cp "${manifest_src}" "${dst_manifest}"; then
 			echo "Copied bottle manifest to cache:  ${dst_manifest}"
@@ -61,7 +61,7 @@ cache_bottle_verify() {
 	# Optional: verify checksum using sha256sum / shasum (macOS variant) if available
 	if command -v shasum >/dev/null 2>&1; then
 		echo "Verifying sha256 checksum..."
-		(cd "${dst_dir}" && shasum -a 256 "$(basename "${dst}")")
+		(cd "${dst_dir}" && shasum -a 256 "$(basename ""${dst}"")")
 		echo "Done. If this matches expected value from source/manifest, bottle is valid."
 	else
 		echo "Note: 'shasum' not found — skipping checksum verification."
@@ -71,15 +71,15 @@ cache_bottle_verify() {
 }
 
 # shellcheck disable=SC2086
-brew info --json=v1 ${INSTALLED} 2>/dev/null >"${TMP_FILE}"
-BUILT="$(jq -r '.[] | select(.installed[-1].poured_from_bottle == false) | .name' "${TMP_FILE}")"
+brew info --json=v1 "${INSTALLED}" 2>/dev/null >"${TMP_FILE}"
+BUILT="$(jq -r '.[] | select(.installed[-1].poured_from_bottle == false) | .name' ""${TMP_FILE}"")"
 echo "\${BUILT} = ${BUILT}"
 
 # Determine architecture-specific cache directory
 ARCH=$(uname -m)
-if [[ ${ARCH} == "x86_64" ]]; then
+if [[ "${ARCH}" == "x86_64" ]]; then
 	CACHE_DIR="${BREW_SLUSH_HOME}/cache/Intel/homebrew-cache"
-elif [[ ${ARCH} == "arm64" ]]; then
+elif [[ "${ARCH}" == "arm64" ]]; then
 	CACHE_DIR="${BREW_SLUSH_HOME}/cache/ARM/homebrew-cache"
 else
 	echo "ERROR: Unknown architecture ${ARCH}"
@@ -88,7 +88,7 @@ fi
 
 mkdir -p "${CACHE_DIR}"
 
-for formula in ${BUILT}; do
+for formula in "${BUILT}"; do
 	echo "=========================================="
 	echo "Processing ${formula}..."
 	echo "=========================================="
@@ -113,7 +113,7 @@ for formula in ${BUILT}; do
 	# Extract bottle filename from output (format: ./formula--version.tag.bottle.tar.gz)
 	bottle_file=$(echo "${bottle_output}" | grep -oE '\./[^[:space:]]+\.bottle\.tar\.gz' | head -n 1)
 
-	if [[ -z ${bottle_file} ]] || [[ ! -f ${bottle_file} ]]; then
+	if [[ -z "${bottle_file}" ]] || [[ ! -f "${bottle_file}" ]]; then
 		echo "WARNING: Could not find bottle file for ${formula}"
 		continue
 	fi
@@ -130,14 +130,14 @@ for formula in ${BUILT}; do
 
 		# Clean up the local bottle file after successful caching
 		rm -f "${bottle_file}"
-		[[ -f ${manifest_file} ]] && rm -f "${manifest_file}"
+		[[ -f "${manifest_file}" ]] && rm -f "${manifest_file}"
 
 		# Also copy to our persistent cache directory for backup
 		bottle_basename=$(basename "${bottle_file}")
-		cp "$(brew --cache --force-bottle "${bottle_basename}")" "${CACHE_DIR}/" 2>/dev/null
+		cp "$(brew --cache --force-bottle ""${bottle_basename}"")" "${CACHE_DIR}/" 2>/dev/null
 
-		if [[ -f "$(brew --cache --force-bottle "${bottle_basename}")".bottle_manifest.json ]]; then
-			cp "$(brew --cache --force-bottle "${bottle_basename}")".bottle_manifest.json "${CACHE_DIR}/" 2>/dev/null
+		if [[ -f "$(brew --cache --force-bottle ""${bottle_basename}"")".bottle_manifest.json ]]; then
+			cp "$(brew --cache --force-bottle ""${bottle_basename}"")".bottle_manifest.json "${CACHE_DIR}/" 2>/dev/null
 		fi
 
 		echo "Backed up to ${CACHE_DIR}/${bottle_basename}"

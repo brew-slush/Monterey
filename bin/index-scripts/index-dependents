@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 START_TIME=$(date +%s)
 
@@ -8,13 +8,13 @@ export HOMEBREW_NO_ENV_HINTS=1
 
 # Get the freeze commit from homebrew-core repo
 HOMEBREW_CORE_DIR="${MOUNT_DIR}/repos/homebrew-core"
-if [[ ! -d ${HOMEBREW_CORE_DIR} ]]; then
+if [[ ! -d "${HOMEBREW_CORE_DIR}" ]]; then
 	echo "ERROR: Homebrew core repository not found at ${HOMEBREW_CORE_DIR}"
 	exit 1
 fi
 
 FREEZE_COMMIT=$(cd "${HOMEBREW_CORE_DIR}" && git rev-parse --short HEAD 2>/dev/null)
-if [[ -z ${FREEZE_COMMIT} ]]; then
+if [[ -z "${FREEZE_COMMIT}" ]]; then
 	echo "ERROR: Could not determine freeze commit from ${HOMEBREW_CORE_DIR}"
 	exit 1
 fi
@@ -24,21 +24,21 @@ ALL_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_all"
 CACHE_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_uses"
 
 # Check if _deps index exists
-if [[ ! -f ${DEPS_FILE} ]]; then
+if [[ ! -f "${DEPS_FILE}" ]]; then
 	echo "ERROR: Dependencies index not found at ${DEPS_FILE}"
 	echo "Please run: index-dependencies first"
 	exit 1
 fi
 
 # Check if _all index exists
-if [[ ! -f ${ALL_FILE} ]]; then
+if [[ ! -f "${ALL_FILE}" ]]; then
 	echo "ERROR: All formulae index not found at ${ALL_FILE}"
 	echo "Please run: brew formulae > ${ALL_FILE}"
 	exit 1
 fi
 
 # Check if cache file exists
-if [[ ! -f ${CACHE_FILE} ]]; then
+if [[ ! -f "${CACHE_FILE}" ]]; then
 	echo "Generating dependents index for commit ${FREEZE_COMMIT}"
 	echo "(This reverses the dependencies index - very fast!)"
 
@@ -54,14 +54,14 @@ if [[ ! -f ${CACHE_FILE} ]]; then
 			# Skip comment lines
 			/^#/ { next }
 			{
-				formula = $1;
+				formula = ${1};
     # Process each dependency
     for (i = 2; i <= NF; i++) {
-      if ($i != "") {
-        if (uses[$i] == "") {
-          uses[$i] = formula;
+      if (${i} != "") {
+        if (uses[${i}] == "") {
+          uses[${i}] = formula;
         } else {
-          uses[$i] = uses[$i] "," formula;
+          uses[${i}] = uses[${i}] "," formula;
         }
       }
     }
@@ -69,7 +69,7 @@ if [[ ! -f ${CACHE_FILE} ]]; then
   END {
     # Print all formulae with their dependents
     while ((getline < "'"${ALL_FILE}"'") > 0) {
-      formula = $0;
+      formula = ${0};
       if (uses[formula] != "") {
         print formula "," uses[formula];
       } else {
@@ -83,7 +83,7 @@ if [[ ! -f ${CACHE_FILE} ]]; then
 	mv "${TMP_CACHE}" "${CACHE_FILE}"
 
 	echo "Cache generated at ${CACHE_FILE}"
-	echo "Indexed $(wc -l <"${CACHE_FILE}") formulae with their dependents"
+	echo "Indexed $(wc -l <""${CACHE_FILE}"") formulae with their dependents"
 else
 	echo "Using cached dependents index for commit ${FREEZE_COMMIT}"
 	echo "Cache file: ${CACHE_FILE}"

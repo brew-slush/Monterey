@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 START_TIME=$(date +%s)
 
@@ -8,13 +8,13 @@ export HOMEBREW_NO_ENV_HINTS=1
 
 # Get the freeze commit from homebrew-core repo
 HOMEBREW_CORE_DIR="${MOUNT_DIR}/repos/homebrew-core"
-if [[ ! -d ${HOMEBREW_CORE_DIR} ]]; then
+if [[ ! -d "${HOMEBREW_CORE_DIR}" ]]; then
 	echo "ERROR: Homebrew core repository not found at ${HOMEBREW_CORE_DIR}"
 	exit 1
 fi
 
 FREEZE_COMMIT=$(cd "${HOMEBREW_CORE_DIR}" && git rev-parse --short HEAD 2>/dev/null)
-if [[ -z ${FREEZE_COMMIT} ]]; then
+if [[ -z "${FREEZE_COMMIT}" ]]; then
 	echo "ERROR: Could not determine freeze commit from ${HOMEBREW_CORE_DIR}"
 	exit 1
 fi
@@ -23,23 +23,23 @@ DEPS_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_deps"
 CACHE_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_nodeps"
 
 # Check if deps file exists
-if [[ ! -f ${DEPS_FILE} ]]; then
+if [[ ! -f "${DEPS_FILE}" ]]; then
 	echo "ERROR: Dependencies index not found at ${DEPS_FILE}" >&2
 	echo "Please run index-dependencies first" >&2
 	exit 1
 fi
 
 # Check if cache file exists
-if [[ ! -f ${CACHE_FILE} ]]; then
+if [[ ! -f "${CACHE_FILE}" ]]; then
 	echo "Generating dependency-free formula list for commit ${FREEZE_COMMIT}"
 	echo "(This is a one-time operation per freeze commit)"
 
 	# Extract formulae with no dependencies (lines with just "formula," or "formula" with no comma)
 	# Format is: formula,dep1,dep2,... so no deps means just "formula" with nothing after
-	grep -v '^#' "${DEPS_FILE}" | awk -F',' '$2 == "" {print $1}' | sort >"${CACHE_FILE}"
+	grep -v '^#' "${DEPS_FILE}" | awk -F',' '${2} == "" {print ${1}}' | sort >"${CACHE_FILE}"
 
 	echo "Cache generated at ${CACHE_FILE}"
-	echo "Found $(wc -l <"${CACHE_FILE}") formulae with no dependencies"
+	echo "Found $(wc -l <""${CACHE_FILE}"") formulae with no dependencies"
 else
 	echo "Using cached formula list for commit ${FREEZE_COMMIT}"
 	echo "Cache file: ${CACHE_FILE}"

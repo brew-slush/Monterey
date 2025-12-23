@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 START_TIME=$(date +%s)
 
@@ -8,28 +8,28 @@ export HOMEBREW_NO_ENV_HINTS=1
 
 # Get the freeze commit from homebrew-core repo
 HOMEBREW_CORE_DIR="${MOUNT_DIR}/repos/homebrew-core"
-if [[ ! -d ${HOMEBREW_CORE_DIR} ]]; then
+if [[ ! -d "${HOMEBREW_CORE_DIR}" ]]; then
 	echo "ERROR: Homebrew core repository not found at ${HOMEBREW_CORE_DIR}" >&2
 	exit 1
 fi
 
 FREEZE_COMMIT=$(cd "${HOMEBREW_CORE_DIR}" && git rev-parse --short HEAD 2>/dev/null)
-if [[ -z ${FREEZE_COMMIT} ]]; then
+if [[ -z "${FREEZE_COMMIT}" ]]; then
 	echo "ERROR: Could not determine freeze commit from ${HOMEBREW_CORE_DIR}" >&2
 	exit 1
 fi
 
 # Determine input file
-if [[ -n $1 ]]; then
-	INPUT_FILE="$1"
-	if [[ ! -f ${INPUT_FILE} ]]; then
+if [[ -n "${1}" ]]; then
+	INPUT_FILE="${1}"
+	if [[ ! -f "${INPUT_FILE}" ]]; then
 		echo "ERROR: Input file not found: ${INPUT_FILE}" >&2
 		exit 1
 	fi
 	echo "Using input file: ${INPUT_FILE}" >&2
 else
 	INPUT_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_all"
-	if [[ ! -f ${INPUT_FILE} ]]; then
+	if [[ ! -f "${INPUT_FILE}" ]]; then
 		echo "ERROR: All formulae index not found at ${INPUT_FILE}" >&2
 		echo "Please run: brew formulae > ${INPUT_FILE}" >&2
 		exit 1
@@ -40,7 +40,7 @@ fi
 # Load no-platform exclusion list if it exists
 NOPLATFORM_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_noplatform"
 NOPLATFORM_TEMP=$(mktemp)
-if [[ -f ${NOPLATFORM_FILE} ]]; then
+if [[ -f "${NOPLATFORM_FILE}" ]]; then
 	echo "Loading platform exclusion list..." >&2
 	# Extract just formula names (skip comment lines)
 	grep -v '^#' "${NOPLATFORM_FILE}" | cut -d',' -f1 >"${NOPLATFORM_TEMP}"
@@ -50,7 +50,7 @@ fi
 
 # Get brew cache directory
 CACHE_DIR="$(brew --cache)"
-if [[ -z ${CACHE_DIR} ]]; then
+if [[ -z "${CACHE_DIR}" ]]; then
 	echo "ERROR: Could not determine brew cache directory" >&2
 	exit 1
 fi
@@ -78,7 +78,7 @@ while read -r formula; do
 	((TOTAL++))
 
 	# Skip if in no-platform exclusion list
-	if [[ -f ${NOPLATFORM_TEMP} ]] && grep -qxF "${formula}" "${NOPLATFORM_TEMP}"; then
+	if [[ -f "${NOPLATFORM_TEMP}" ]] && grep -qxF "${formula}" "${NOPLATFORM_TEMP}"; then
 		((EXCLUDED++))
 		continue
 	fi
@@ -98,7 +98,7 @@ END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
 echo "" >&2
 echo "Total formulae checked: ${TOTAL}" >&2
-if [[ ${EXCLUDED} -gt 0 ]]; then
+if [[ "${EXCLUDED}" -gt 0 ]]; then
 	echo "Excluded (no platform bottles): ${EXCLUDED}" >&2
 fi
 echo "Missing bottles: ${MISSING}" >&2

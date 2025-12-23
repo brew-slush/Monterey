@@ -1,6 +1,7 @@
-BREW_SLUSH_HOME=/Volumes/BrewSlush/Monterey
+BREW_SLUSH_HOME=/Volumes/Monterey
+export BREW_SLUSH_HOME
 
-# MS short for Monterey Share not Microsoft :-)
+# MS short for Monterey Share not Microsoft
 MS_BIN="${BREW_SLUSH_HOME}/bin"
 MS_DRIVERS="${BREW_SLUSH_HOME}/drivers"
 MS_DRIVERS_ARM="${MS_DRIVERS}/ARM"
@@ -43,8 +44,6 @@ export HOMEBREW_NO_WARNINGS=1
 # CACHE_ENABLE="false"
 # if [[ "${CACHE_ENABLE}" == "true" ]]; then
   export HOMEBREW_NO_INSTALL_CLEANUP=1
-  export HOMEBREW_CACHE="/Volumes/Monterey/cache/${PROC}/homebrew-cache"
-  # export HOMEBREW_CELLAR="/Volumes/Monterey/cache/${PROC}/homebrew-cellar"
+  export HOMEBREW_CACHE="${BREW_SLUSH_HOME}/cache/${PROC}/homebrew-cache"
+  # export HOMEBREW_CELLAR="${BREW_SLUSH_HOME}/cache/${PROC}/homebrew-cellar"
 # fi
-
-export PATH="/usr/local/bin:$PATH"

@@ -1,6 +1,6 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
-START_TIME=$(date +%s)
+START_TIME=$(/bin/date +%s)
 BREW_SLUSH_HOME="${BREW_SLUSH_HOME:-/Volumes/BrewSlush/Monterey}"
 export HOMEBREW_NO_ENV_HINTS=1
 
@@ -14,18 +14,18 @@ FETCH_TYPE="both"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
-	case $1 in
+	case "${1}" in
 	--window)
-		WINDOW_SIZE="$2"
-		if ! [[ ${WINDOW_SIZE} =~ ^[0-9]+$ ]] || [[ ${WINDOW_SIZE} -lt 1 ]]; then
+		WINDOW_SIZE="${2}"
+		if ! [[ "${WINDOW_SIZE}" =~ ^[0-9]+$ ]] || [[ "${WINDOW_SIZE}" -lt 1 ]]; then
 			echo "ERROR: --window must be a positive integer"
 			exit 1
 		fi
 		shift 2
 		;;
 	--type)
-		FETCH_TYPE="$2"
-		if [[ ! ${FETCH_TYPE} =~ ^(formulae|casks|both)$ ]]; then
+		FETCH_TYPE="${2}"
+		if [[ ! "${FETCH_TYPE}" =~ ^(formulae|casks|both)$ ]]; then
 			echo "ERROR: --type must be one of: formulae, casks, both"
 			exit 1
 		fi
@@ -36,16 +36,16 @@ while [[ $# -gt 0 ]]; do
 		shift
 		;;
 	--max-runtime)
-		MAX_RUNTIME="$2"
-		if ! [[ ${MAX_RUNTIME} =~ ^[0-9]+[hms]$ ]]; then
+		MAX_RUNTIME="${2}"
+		if ! [[ "${MAX_RUNTIME}" =~ ^[0-9]+[hms]$ ]]; then
 			echo "ERROR: --max-runtime must be in format: <number>[h|m|s] (e.g., 2h, 30m, 3600s)"
 			exit 1
 		fi
 		shift 2
 		;;
 	--max-batches)
-		MAX_BATCHES="$2"
-		if ! [[ ${MAX_BATCHES} =~ ^[0-9]+$ ]] || [[ ${MAX_BATCHES} -lt 1 ]]; then
+		MAX_BATCHES="${2}"
+		if ! [[ "${MAX_BATCHES}" =~ ^[0-9]+$ ]] || [[ "${MAX_BATCHES}" -lt 1 ]]; then
 			echo "ERROR: --max-batches must be a positive integer"
 			exit 1
 		fi
@@ -56,7 +56,7 @@ while [[ $# -gt 0 ]]; do
 		shift
 		;;
 	--help)
-		cat <<-EOF
+		/bin/cat <<-EOF
 			Usage: batch-fetch [OPTIONS] [INPUT_FILE]
 
 			Fetch Homebrew formulae and/or casks in batches.
@@ -91,7 +91,7 @@ while [[ $# -gt 0 ]]; do
 		exit 0
 		;;
 	*)
-		INPUT_FILE="$1"
+		INPUT_FILE="${1}"
 		shift
 		;;
 	esac
@@ -99,18 +99,18 @@ done
 
 # Convert max runtime to seconds
 convert_to_seconds() {
-	local time_str="$1"
+	local time_str="${1}"
 	local value="${time_str%[hms]}"
 	local unit="${time_str: -1}"
 
-	case ${unit} in
+	case "${unit}" in
 	h) echo $((value * 3600)) ;;
 	m) echo $((value * 60)) ;;
 	s) echo "${value}" ;;
 	esac
 }
 
-if [[ -n ${MAX_RUNTIME} ]]; then
+if [[ -n "${MAX_RUNTIME}" ]]; then
 	MAX_RUNTIME_SECONDS=$(convert_to_seconds "${MAX_RUNTIME}")
 	echo "Maximum runtime: ${MAX_RUNTIME} (${MAX_RUNTIME_SECONDS} seconds)"
 fi
@@ -119,18 +119,18 @@ fi
 get_freeze_commits() {
 	# Homebrew core (formulae)
 	HOMEBREW_CORE_DIR="${BREW_SLUSH_HOME}/repos/homebrew-core"
-	if [[ -d ${HOMEBREW_CORE_DIR} ]]; then
-		FREEZE_COMMIT_CORE=$(cd "${HOMEBREW_CORE_DIR}" && git rev-parse --short HEAD 2>/dev/null)
-		if [[ -z ${FREEZE_COMMIT_CORE} ]]; then
+	if [[ -d "${HOMEBREW_CORE_DIR}" ]]; then
+		FREEZE_COMMIT_CORE=$(cd "${HOMEBREW_CORE_DIR}" && /usr/bin/git rev-parse --short HEAD 2>/dev/null)
+		if [[ -z "${FREEZE_COMMIT_CORE}" ]]; then
 			echo "WARNING: Could not determine freeze commit from ${HOMEBREW_CORE_DIR}"
 		fi
 	fi
 
 	# Homebrew cask (casks)
 	HOMEBREW_CASK_DIR="${BREW_SLUSH_HOME}/repos/homebrew-cask"
-	if [[ -d ${HOMEBREW_CASK_DIR} ]]; then
-		FREEZE_COMMIT_CASK=$(cd "${HOMEBREW_CASK_DIR}" && git rev-parse --short HEAD 2>/dev/null)
-		if [[ -z ${FREEZE_COMMIT_CASK} ]]; then
+	if [[ -d "${HOMEBREW_CASK_DIR}" ]]; then
+		FREEZE_COMMIT_CASK=$(cd "${HOMEBREW_CASK_DIR}" && /usr/bin/git rev-parse --short HEAD 2>/dev/null)
+		if [[ -z "${FREEZE_COMMIT_CASK}" ]]; then
 			echo "WARNING: Could not determine freeze commit from ${HOMEBREW_CASK_DIR}"
 		fi
 	fi
@@ -140,13 +140,13 @@ get_freeze_commits
 
 # Main fetch function for a single type
 fetch_type() {
-	local type="$1"
+	local type="${1}"
 	local freeze_commit=""
 	local default_index=""
 	local fetch_cmd_prefix=""
 	local type_label=""
 	
-	if [[ ${type} == "formulae" ]]; then
+	if [[ "${type}" == "formulae" ]]; then
 		freeze_commit="${FREEZE_COMMIT_CORE}"
 		default_index="${BREW_SLUSH_HOME}/repos/${freeze_commit}_all"
 		fetch_cmd_prefix="brew fetch --deps"
@@ -158,7 +158,7 @@ fetch_type() {
 		type_label="Casks"
 	fi
 
-	if [[ -z ${freeze_commit} ]]; then
+	if [[ -z "${freeze_commit}" ]]; then
 		echo "ERROR: Freeze commit not available for ${type}"
 		return 1
 	fi
@@ -175,28 +175,28 @@ fetch_type() {
 
 	# Lock file management
 	acquire_lock() {
-		if [[ -f ${LOCK_FILE} ]]; then
+		if [[ -f "${LOCK_FILE}" ]]; then
 			local lock_pid
-			lock_pid=$(cat "${LOCK_FILE}" 2>/dev/null || echo "")
+			lock_pid=$(/bin/cat "${LOCK_FILE}" 2>/dev/null || echo "")
 			
 			local lock_mtime
-			if [[ "$(uname)" == "Darwin" ]]; then
-				lock_mtime=$(stat -f %m "${LOCK_FILE}" 2>/dev/null || echo 0)
+			if [[ "$(/usr/bin/uname)" == "Darwin" ]]; then
+				lock_mtime=$(/usr/bin/stat -f %m "${LOCK_FILE}" 2>/dev/null || echo 0)
 			else
-				lock_mtime=$(stat -c %Y "${LOCK_FILE}" 2>/dev/null || echo 0)
+				lock_mtime=$(/usr/bin/stat -c %Y "${LOCK_FILE}" 2>/dev/null || echo 0)
 			fi
-			local lock_age=$(($(date +%s) - lock_mtime))
+			local lock_age=$(($(/bin/date +%s) - lock_mtime))
 
-			if [[ -n ${lock_pid} ]] && kill -0 "${lock_pid}" 2>/dev/null; then
+			if [[ -n "${lock_pid}" ]] && /bin/kill -0 "${lock_pid}" 2>/dev/null; then
 				echo "ERROR: Another instance is already running for ${type} (PID: ${lock_pid})"
 				return 1
-			elif [[ ${lock_age} -lt 86400 ]]; then
+			elif [[ "${lock_age}" -lt 86400 ]]; then
 				echo "ERROR: Lock file exists for ${type} from recent run but process not found."
 				echo "If you're sure no other instance is running, remove: ${LOCK_FILE}"
 				return 1
 			else
 				echo "WARNING: Removing stale lock file for ${type} (>24 hours old)"
-				rm -f "${LOCK_FILE}"
+				/bin/rm -f "${LOCK_FILE}"
 			fi
 		fi
 
@@ -204,22 +204,22 @@ fetch_type() {
 	}
 
 	release_lock() {
-		rm -f "${LOCK_FILE}"
+		/bin/rm -f "${LOCK_FILE}"
 	}
 
 	# State management functions
 	save_state() {
-		if [[ ${RESUMABLE} == true ]]; then
-			local current_line="$1"
-			local batches_processed="$2"
-			cat >"${STATE_FILE}" <<-EOFSTATE
+		if [[ "${RESUMABLE}" == true ]]; then
+			local current_line="${1}"
+			local batches_processed="${2}"
+			/bin/cat >"${STATE_FILE}" <<-EOFSTATE
 				{
 				  "type": "${type}",
 				  "input_file": "${INPUT_FILE}",
-				  "window_size": ${WINDOW_SIZE},
-				  "last_line_processed": ${current_line},
-				  "batches_processed": ${batches_processed},
-				  "last_update": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+				  "window_size": "${WINDOW_SIZE}",
+				  "last_line_processed": "${current_line}",
+				  "batches_processed": "${batches_processed}",
+				  "last_update": "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)",
 				  "freeze_commit": "${freeze_commit}"
 				}
 			EOFSTATE
@@ -227,15 +227,15 @@ fetch_type() {
 	}
 
 	load_state() {
-		if [[ ${RESUMABLE} == true ]] && [[ -f ${STATE_FILE} ]] && [[ ${RESET_STATE} == false ]]; then
+		if [[ "${RESUMABLE}" == true ]] && [[ -f "${STATE_FILE}" ]] && [[ "${RESET_STATE}" == false ]]; then
 			local saved_input
-			saved_input=$(grep '"input_file"' "${STATE_FILE}" | sed 's/.*": "\(.*\)".*/\1/')
+			saved_input=$(/usr/bin/grep '"input_file"' "${STATE_FILE}" | /usr/bin/sed 's/.*": "\(.*\)".*/\1/')
 			local saved_line
-			saved_line=$(grep '"last_line_processed"' "${STATE_FILE}" | sed 's/.*": \([0-9]*\).*/\1/')
+			saved_line=$(/usr/bin/grep '"last_line_processed"' "${STATE_FILE}" | /usr/bin/sed 's/.*": \([0-9]*\).*/\1/')
 			local saved_batches
-			saved_batches=$(grep '"batches_processed"' "${STATE_FILE}" | sed 's/.*": \([0-9]*\).*/\1/')
+			saved_batches=$(/usr/bin/grep '"batches_processed"' "${STATE_FILE}" | /usr/bin/sed 's/.*": \([0-9]*\).*/\1/')
 
-			if [[ ${saved_input} == "${INPUT_FILE}" ]]; then
+			if [[ "${saved_input}" == "${INPUT_FILE}" ]]; then
 				echo "Resuming ${type} from line ${saved_line} (${saved_batches} batches already processed)"
 				echo "${saved_line}|${saved_batches}"
 			else
@@ -249,18 +249,18 @@ fetch_type() {
 	}
 
 	# Acquire lock if in resumable mode
-	if [[ ${RESUMABLE} == true ]]; then
+	if [[ "${RESUMABLE}" == true ]]; then
 		acquire_lock || return 1
 		
-		if [[ ${RESET_STATE} == true ]]; then
+		if [[ "${RESET_STATE}" == true ]]; then
 			echo "Resetting state for ${type}..."
-			rm -f "${STATE_FILE}"
+			/bin/rm -f "${STATE_FILE}"
 		fi
 	fi
 
 	# Determine input file
-	if [[ -n ${INPUT_FILE} ]]; then
-		if [[ ! -f ${INPUT_FILE} ]]; then
+	if [[ -n "${INPUT_FILE}" ]]; then
+		if [[ ! -f "${INPUT_FILE}" ]]; then
 			echo "ERROR: Input file not found: ${INPUT_FILE}"
 			release_lock
 			return 1
@@ -268,7 +268,7 @@ fetch_type() {
 		echo "Using input file: ${INPUT_FILE}"
 	else
 		INPUT_FILE="${default_index}"
-		if [[ ! -f ${INPUT_FILE} ]]; then
+		if [[ ! -f "${INPUT_FILE}" ]]; then
 			echo "ERROR: Index not found at ${INPUT_FILE}"
 			release_lock
 			return 1
@@ -278,15 +278,15 @@ fetch_type() {
 
 	# Load state if resumable
 	state_data=$(load_state)
-	start_line=$(echo "${state_data}" | cut -d'|' -f1)
-	batches_completed=$(echo "${state_data}" | cut -d'|' -f2)
+start_line=$(echo "${state_data}" | /usr/bin/cut -d'|' -f1)
+batches_completed=$(echo "${state_data}" | /usr/bin/cut -d'|' -f2)
 
 	# Initialize CSV results file
 	FETCH_RESULTS="${BREW_SLUSH_HOME}/repos/${freeze_commit}_${type}_fetch_results"
-	FETCH_RESULTS_NEW=$(mktemp)
+FETCH_RESULTS_NEW=$(/usr/bin/mktemp)
 
-	if [[ ! -f ${FETCH_RESULTS} ]]; then
-		if [[ ${type} == "formulae" ]]; then
+	if [[ ! -f "${FETCH_RESULTS}" ]]; then
+		if [[ "${type}" == "formulae" ]]; then
 			echo "# fields: formula,bottle,source,platform-specific,error" >"${FETCH_RESULTS}"
 		else
 			echo "# fields: cask,downloaded,error" >"${FETCH_RESULTS}"
@@ -295,19 +295,19 @@ fetch_type() {
 
 	# Function to add result
 	add_fetch_result() {
-		if [[ ${type} == "formulae" ]]; then
-			local formula="$1"
-			local has_bottle="$2"
-			local has_source="$3"
-			local platform_specific="$4"
-			local error_msg="$5"
+		if [[ "${type}" == "formulae" ]]; then
+			local formula="${1}"
+			local has_bottle="${2}"
+			local has_source="${3}"
+			local platform_specific="${4}"
+			local error_msg="${5}"
 			formula="${formula#homebrew/core/}"
 			error_msg="${error_msg//,/;}"
 			echo "${formula},${has_bottle},${has_source},${platform_specific},${error_msg}" >>"${FETCH_RESULTS_NEW}"
 		else
-			local cask="$1"
-			local downloaded="$2"
-			local error_msg="$3"
+			local cask="${1}"
+			local downloaded="${2}"
+			local error_msg="${3}"
 			cask="${cask#homebrew/cask/}"
 			error_msg="${error_msg//,/;}"
 			echo "${cask},${downloaded},${error_msg}" >>"${FETCH_RESULTS_NEW}"
@@ -321,12 +321,12 @@ fetch_type() {
 
 	# Recursive function to fetch a batch
 	fetch_batch() {
-		local batch="$1"
-		local indent="$2"
+		local batch="${1}"
+		local indent="${2}"
 		local count
-		count=$(echo "${batch}" | wc -w | tr -d ' ')
+		count=$(echo "${batch}" | /usr/bin/wc -w | /usr/bin/tr -d ' ')
 
-		if [[ ${count} -eq 0 ]]; then
+		if [[ "${count}" -eq 0 ]]; then
 			return 0
 		fi
 
@@ -334,9 +334,9 @@ fetch_type() {
 		local already_cached=()
 		local need_fetch=()
 
-		for item in ${batch}; do
-			if [[ ${type} == "formulae" ]]; then
-				if find "${CACHE_DIR}" -name "*--${item}--*.bottle*.tar.gz" -print -quit 2>/dev/null | grep -q .; then
+		for item in "${batch}"; do
+			if [[ "${type}" == "formulae" ]]; then
+				if /usr/bin/find "${CACHE_DIR}" -name "*--${item}--*.bottle*.tar.gz" -print -quit 2>/dev/null | /usr/bin/grep -q .; then
 					already_cached+=("${item}")
 					add_fetch_result "${item}" "true" "false" "false" ""
 				else
@@ -344,7 +344,7 @@ fetch_type() {
 				fi
 			else
 				# For casks, check for any download artifact
-				if find "${CACHE_DIR}" -name "*${item}*" -print -quit 2>/dev/null | grep -q .; then
+				if /usr/bin/find "${CACHE_DIR}" -name "*${item}*" -print -quit 2>/dev/null | /usr/bin/grep -q .; then
 					already_cached+=("${item}")
 					add_fetch_result "${item}" "true" ""
 				else
@@ -354,11 +354,11 @@ fetch_type() {
 		done
 
 		# Report cached
-		if [[ ${#already_cached[@]} -gt 0 ]]; then
+		if [[ "${#already_cached[@]}" -gt 0 ]]; then
 			echo "${indent}↻ Already cached ${#already_cached[@]} ${type}" >&2
 		fi
 
-		if [[ ${#need_fetch[@]} -eq 0 ]]; then
+		if [[ "${#need_fetch[@]}" -eq 0 ]]; then
 			return 0
 		fi
 
@@ -367,11 +367,11 @@ fetch_type() {
 		# Try batch fetch
 		local fetch_error
 		# shellcheck disable=SC2086
-		if fetch_error=$(${fetch_cmd_prefix} ${fetch_batch_str} 2>&1); then
+		if fetch_error=$("${fetch_cmd_prefix}" "${fetch_batch_str}" 2>&1); then
 			# Success - verify what was downloaded
-			for item in ${fetch_batch_str}; do
-				if [[ ${type} == "formulae" ]]; then
-					if find "${CACHE_DIR}" -name "*--${item}--*.bottle*.tar.gz" -print -quit 2>/dev/null | grep -q .; then
+			for item in "${fetch_batch_str}"; do
+				if [[ "${type}" == "formulae" ]]; then
+					if /usr/bin/find "${CACHE_DIR}" -name "*--${item}--*.bottle*.tar.gz" -print -quit 2>/dev/null | /usr/bin/grep -q .; then
 						add_fetch_result "${item}" "true" "false" "false" ""
 						echo "${indent}✓ ${item}" >&2
 					else
@@ -379,7 +379,7 @@ fetch_type() {
 						echo "${indent}⚠ ${item} (no bottle)" >&2
 					fi
 				else
-					if find "${CACHE_DIR}" -name "*${item}*" -print -quit 2>/dev/null | grep -q .; then
+					if /usr/bin/find "${CACHE_DIR}" -name "*${item}*" -print -quit 2>/dev/null | /usr/bin/grep -q .; then
 						add_fetch_result "${item}" "true" ""
 						echo "${indent}✓ ${item}" >&2
 					else
@@ -393,15 +393,15 @@ fetch_type() {
 
 		# Parse error to find failed item
 		local failed
-		failed=$(echo "${fetch_error}" | sed -n 's/^Error: \([^:]*\):.*/\1/p' | head -1)
+		failed=$(echo "${fetch_error}" | /usr/bin/sed -n 's/^Error: \([^:]*\):.*/\1/p' | /usr/bin/head -1)
 
-		if [[ -n ${failed} ]]; then
+		if [[ -n "${failed}" ]]; then
 			echo "${indent}✗ Failed: ${failed}" >&2
 			
 			local error_message
-			error_message=$(echo "${fetch_error}" | grep "^Error:" | head -1 | sed 's/^Error: [^:]*: //')
+			error_message=$(echo "${fetch_error}" | /usr/bin/grep "^Error:" | /usr/bin/head -1 | /usr/bin/sed 's/^Error: [^:]*: //')
 			
-			if [[ ${type} == "formulae" ]]; then
+			if [[ "${type}" == "formulae" ]]; then
 				add_fetch_result "${failed}" "false" "false" "false" "${error_message}"
 			else
 				add_fetch_result "${failed}" "false" "${error_message}"
@@ -411,28 +411,28 @@ fetch_type() {
 			local failed_name="${failed#homebrew/core/}"
 			failed_name="${failed_name#homebrew/cask/}"
 			local remaining
-			remaining=$(echo "${fetch_batch_str}" | tr ' ' '\n' | grep -v -e "^${failed}$" -e "^${failed_name}$" | tr '\n' ' ')
+			remaining=$(echo "${fetch_batch_str}" | /usr/bin/tr ' ' '\n' | /usr/bin/grep -v -e "^${failed}$" -e "^${failed_name}$" | /usr/bin/tr '\n' ' ')
 			
 			local remaining_count
-			remaining_count=$(echo "${remaining}" | wc -w | tr -d ' ')
+			remaining_count=$(echo "${remaining}" | /usr/bin/wc -w | /usr/bin/tr -d ' ')
 
-			if [[ ${remaining_count} -ge ${count} ]]; then
+			if [[ "${remaining_count}" -ge "${count}" ]]; then
 				echo "${indent}ERROR: Could not remove failed item, aborting" >&2
 				return 1
 			fi
 
-			if [[ ${remaining_count} -gt 0 ]]; then
+			if [[ "${remaining_count}" -gt 0 ]]; then
 				echo "${indent}→ Retrying with ${remaining_count} items..." >&2
 				fetch_batch "${remaining}" "${indent}  "
 			fi
 		else
 			# Try individually
 			echo "${indent}Trying individually..." >&2
-			for item in ${fetch_batch_str}; do
+			for item in "${fetch_batch_str}"; do
 				local individual_error
-				if individual_error=$(${fetch_cmd_prefix} "${item}" 2>&1); then
+				if individual_error=$("${fetch_cmd_prefix}" "${item}" 2>&1); then
 					echo "${indent}  ✓ ${item}" >&2
-					if [[ ${type} == "formulae" ]]; then
+					if [[ "${type}" == "formulae" ]]; then
 						add_fetch_result "${item}" "true" "false" "false" ""
 					else
 						add_fetch_result "${item}" "true" ""
@@ -440,8 +440,8 @@ fetch_type() {
 				else
 					echo "${indent}  ✗ ${item}" >&2
 					local error_message
-					error_message=$(echo "${individual_error}" | grep "^Error:" | head -1 | sed 's/^Error: [^:]*: //')
-					if [[ ${type} == "formulae" ]]; then
+					error_message=$(echo "${individual_error}" | /usr/bin/grep "^Error:" | /usr/bin/head -1 | /usr/bin/sed 's/^Error: [^:]*: //')
+					if [[ "${type}" == "formulae" ]]; then
 						add_fetch_result "${item}" "false" "false" "false" "${error_message}"
 					else
 						add_fetch_result "${item}" "false" "${error_message}"
@@ -462,51 +462,51 @@ fetch_type() {
 	trap handle_signal SIGINT SIGTERM
 
 	# Main fetch loop
-	start=${start_line}
+	start="${start_line}"
 	end=$((start_line + WINDOW_SIZE - 1))
 	batches_processed=0
 
 	while true; do
-		if [[ ${interrupted} == true ]]; then
+		if [[ "${interrupted}" == true ]]; then
 			echo "" >&2
 			echo "Interrupted ${type} - saving state and exiting..." >&2
 			break
 		fi
 
-		if [[ -n ${MAX_RUNTIME_SECONDS} ]]; then
-			elapsed=$(($(date +%s) - START_TIME))
-			if [[ ${elapsed} -ge ${MAX_RUNTIME_SECONDS} ]]; then
+		if [[ -n "${MAX_RUNTIME_SECONDS}" ]]; then
+			elapsed=$(($(/bin/date +%s) - START_TIME))
+			if [[ "${elapsed}" -ge "${MAX_RUNTIME_SECONDS}" ]]; then
 				echo "" >&2
 				echo "Maximum runtime reached for ${type} - saving state and exiting..." >&2
 				break
 			fi
 		fi
 
-		if [[ -n ${MAX_BATCHES} ]] && [[ ${batches_processed} -ge ${MAX_BATCHES} ]]; then
+		if [[ -n "${MAX_BATCHES}" ]] && [[ "${batches_processed}" -ge "${MAX_BATCHES}" ]]; then
 			echo "" >&2
 			echo "Maximum batches reached for ${type} - saving state and exiting..." >&2
 			break
 		fi
 
 		sed_cmd="${start},${end}p"
-		lines=$(sed -n "${sed_cmd}" "${INPUT_FILE}")
-		if [[ -z ${lines} ]]; then
+		lines=$(/usr/bin/sed -n "${sed_cmd}" "${INPUT_FILE}")
+		if [[ -z "${lines}" ]]; then
 			echo "" >&2
 			echo "All ${type} processed!" >&2
-			if [[ ${RESUMABLE} == true ]]; then
-				rm -f "${STATE_FILE}"
+			if [[ "${RESUMABLE}" == true ]]; then
+				/bin/rm -f "${STATE_FILE}"
 			fi
 			break
 		fi
 
-		line_count=$(echo "${lines}" | wc -w | tr -d ' ')
+		line_count=$(echo "${lines}" | /usr/bin/wc -w | /usr/bin/tr -d ' ')
 		echo "" >&2
 		echo "Fetching ${type} for lines ${start} to ${end} (${line_count} items)..." >&2
 		fetch_batch "${lines}" "  "
 
 		batches_processed=$((batches_processed + 1))
 		
-		if [[ ${RESUMABLE} == true ]]; then
+		if [[ "${RESUMABLE}" == true ]]; then
 			save_state "${end}" "$((batches_completed + batches_processed))"
 		fi
 
@@ -518,32 +518,32 @@ fetch_type() {
 	echo "" >&2
 	echo "Merging ${type} results..." >&2
 
-	FETCH_RESULTS_MERGED=$(mktemp)
-	head -n 1 "${FETCH_RESULTS}" >"${FETCH_RESULTS_MERGED}"
+	FETCH_RESULTS_MERGED=$(/usr/bin/mktemp)
+	/usr/bin/head -n 1 "${FETCH_RESULTS}" >"${FETCH_RESULTS_MERGED}"
 
-	EXISTING_TEMP=$(mktemp)
-	grep -v '^#' "${FETCH_RESULTS}" >"${EXISTING_TEMP}" 2>/dev/null || true
+	EXISTING_TEMP=$(/usr/bin/mktemp)
+	/usr/bin/grep -v '^#' "${FETCH_RESULTS}" >"${EXISTING_TEMP}" 2>/dev/null || true
 
-	UPDATED_TEMP=$(mktemp)
+	UPDATED_TEMP=$(/usr/bin/mktemp)
 	while IFS= read -r line; do
-		item=$(echo "${line}" | cut -d',' -f1)
+		item=$(echo "${line}" | /usr/bin/cut -d',' -f1)
 		echo "${item}" >>"${UPDATED_TEMP}"
 	done <"${FETCH_RESULTS_NEW}"
 
-	COMBINED_TEMP=$(mktemp)
-	cat "${FETCH_RESULTS_NEW}" >>"${COMBINED_TEMP}"
+	COMBINED_TEMP=$(/usr/bin/mktemp)
+	/bin/cat "${FETCH_RESULTS_NEW}" >>"${COMBINED_TEMP}"
 
 	while IFS= read -r line; do
-		item=$(echo "${line}" | cut -d',' -f1)
-		if ! grep -qxF "${item}" "${UPDATED_TEMP}"; then
+		item=$(echo "${line}" | /usr/bin/cut -d',' -f1)
+		if ! /usr/bin/grep -qxF "${item}" "${UPDATED_TEMP}"; then
 			echo "${line}" >>"${COMBINED_TEMP}"
 		fi
 	done <"${EXISTING_TEMP}"
 
-	sort -t',' -k1,1 "${COMBINED_TEMP}" >>"${FETCH_RESULTS_MERGED}"
-	mv "${FETCH_RESULTS_MERGED}" "${FETCH_RESULTS}"
+	/usr/bin/sort -t',' -k1,1 "${COMBINED_TEMP}" >>"${FETCH_RESULTS_MERGED}"
+	/bin/mv "${FETCH_RESULTS_MERGED}" "${FETCH_RESULTS}"
 
-	rm -f "${FETCH_RESULTS_NEW}" "${EXISTING_TEMP}" "${UPDATED_TEMP}" "${COMBINED_TEMP}"
+	/bin/rm -f "${FETCH_RESULTS_NEW}" "${EXISTING_TEMP}" "${UPDATED_TEMP}" "${COMBINED_TEMP}"
 
 	# Summary
 	echo "" >&2
@@ -551,42 +551,42 @@ fetch_type() {
 	echo "  ${type_label} Fetch Summary" >&2
 	echo "═══════════════════════════════════════════════════════════════" >&2
 	
-	TOTAL_RESULTS=$(grep -v '^#' "${FETCH_RESULTS}" | wc -l | tr -d ' ')
+	TOTAL_RESULTS=$(/usr/bin/grep -v '^#' "${FETCH_RESULTS}" | /usr/bin/wc -l | /usr/bin/tr -d ' ')
 	
-	if [[ ${type} == "formulae" ]]; then
-		SUCCESSFUL=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$2=="true"' | wc -l | tr -d ' ')
-		FAILED=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$2=="false"' | wc -l | tr -d ' ')
-		NO_BOTTLE=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$5~/No bottle/' | wc -l | tr -d ' ')
+	if [[ "${type}" == "formulae" ]]; then
+		SUCCESSFUL=$(/usr/bin/grep -v '^#' "${FETCH_RESULTS}" | /usr/bin/awk -F',' '${2}=="true"' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+		FAILED=$(/usr/bin/grep -v '^#' "${FETCH_RESULTS}" | /usr/bin/awk -F',' '${2}=="false"' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+		NO_BOTTLE=$(/usr/bin/grep -v '^#' "${FETCH_RESULTS}" | /usr/bin/awk -F',' '${5}~/No bottle/' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
 	else
-		SUCCESSFUL=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$2=="true"' | wc -l | tr -d ' ')
-		FAILED=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$2=="false"' | wc -l | tr -d ' ')
+		SUCCESSFUL=$(/usr/bin/grep -v '^#' "${FETCH_RESULTS}" | /usr/bin/awk -F',' '${2}=="true"' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+		FAILED=$(/usr/bin/grep -v '^#' "${FETCH_RESULTS}" | /usr/bin/awk -F',' '${2}=="false"' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
 	fi
 	
-	echo "Timestamp: $(date)" >&2
+	echo "Timestamp: $(/bin/date)" >&2
 	echo "Freeze commit: ${freeze_commit}" >&2
 	echo "" >&2
 	echo "Results:" >&2
-	echo "  Total ${type} in index: $(wc -l < "${INPUT_FILE}" | tr -d ' ')" >&2
+	echo "  Total ${type} in index: $(/usr/bin/wc -l < ""${INPUT_FILE}"" | /usr/bin/tr -d ' ')" >&2
 	echo "  Total processed: ${TOTAL_RESULTS}" >&2
 	echo "  Successfully fetched: ${SUCCESSFUL}" >&2
 	echo "  Failed: ${FAILED}" >&2
-	if [[ ${type} == "formulae" ]] && [[ ${NO_BOTTLE} -gt 0 ]]; then
+	if [[ "${type}" == "formulae" ]] && [[ "${NO_BOTTLE}" -gt 0 ]]; then
 		echo "  No bottle available: ${NO_BOTTLE}" >&2
 	fi
 	echo "" >&2
 	echo "This run:" >&2
 	echo "  Batches processed: ${batches_processed}" >&2
 	echo "  Total batches completed: $((batches_completed + batches_processed))" >&2
-	if [[ -n ${MAX_RUNTIME} ]]; then
-		local run_elapsed=$(($(date +%s) - START_TIME))
+	if [[ -n "${MAX_RUNTIME}" ]]; then
+		local run_elapsed=$(($(/bin/date +%s) - START_TIME))
 		echo "  Runtime: ${run_elapsed}s / ${MAX_RUNTIME_SECONDS}s max" >&2
 	fi
 	echo "" >&2
 	echo "Output files:" >&2
 	echo "  Results: ${FETCH_RESULTS}" >&2
 	
-	if [[ ${RESUMABLE} == true ]]; then
-		if [[ -f ${STATE_FILE} ]]; then
+	if [[ "${RESUMABLE}" == true ]]; then
+		if [[ -f "${STATE_FILE}" ]]; then
 			echo "  State: ${STATE_FILE}" >&2
 			echo "" >&2
 			echo "Status: INCOMPLETE - Run again to resume from line $((end + 1))" >&2
@@ -606,10 +606,10 @@ fetch_type() {
 
 # Main execution
 echo "Fetch type: ${FETCH_TYPE}"
-echo "Start time: $(date)"
+echo "Start time: $(/bin/date)"
 echo ""
 
-case ${FETCH_TYPE} in
+case "${FETCH_TYPE}" in
 	formulae)
 		fetch_type "formulae"
 		;;
@@ -628,19 +628,19 @@ case ${FETCH_TYPE} in
 		echo "═══════════════════════════════════════════════════════════════" >&2
 		echo "  Overall Summary - Both Formulae & Casks" >&2
 		echo "═══════════════════════════════════════════════════════════════" >&2
-		echo "End time: $(date)" >&2
-		elapsed=$(($(date +%s) - START_TIME))
+		echo "End time: $(/bin/date)" >&2
+		elapsed=$(($(/bin/date +%s) - START_TIME))
 		echo "Total runtime: ${elapsed}s ($((elapsed / 60))m $((elapsed % 60))s)" >&2
-		if [[ -n ${MAX_RUNTIME} ]]; then
+		if [[ -n "${MAX_RUNTIME}" ]]; then
 			echo "Max runtime limit: ${MAX_RUNTIME}" >&2
 		fi
 		echo "" >&2
 		
 		# Formulae stats
 		if [[ -f "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CORE}_formulae_fetch_results" ]]; then
-			FORMULAE_TOTAL=$(grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CORE}_formulae_fetch_results" | wc -l | tr -d ' ')
-			FORMULAE_SUCCESS=$(grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CORE}_formulae_fetch_results" | awk -F',' '$2=="true"' | wc -l | tr -d ' ')
-			FORMULAE_FAILED=$(grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CORE}_formulae_fetch_results" | awk -F',' '$2=="false"' | wc -l | tr -d ' ')
+			FORMULAE_TOTAL=$(/usr/bin/grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CORE}_formulae_fetch_results" | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+			FORMULAE_SUCCESS=$(/usr/bin/grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CORE}_formulae_fetch_results" | /usr/bin/awk -F',' '${2}=="true"' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+			FORMULAE_FAILED=$(/usr/bin/grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CORE}_formulae_fetch_results" | /usr/bin/awk -F',' '${2}=="false"' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
 			echo "Formulae:" >&2
 			echo "  Processed: ${FORMULAE_TOTAL}" >&2
 			echo "  Successful: ${FORMULAE_SUCCESS}" >&2
@@ -650,9 +650,9 @@ case ${FETCH_TYPE} in
 		
 		# Casks stats
 		if [[ -f "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CASK}_casks_fetch_results" ]]; then
-			CASKS_TOTAL=$(grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CASK}_casks_fetch_results" | wc -l | tr -d ' ')
-			CASKS_SUCCESS=$(grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CASK}_casks_fetch_results" | awk -F',' '$2=="true"' | wc -l | tr -d ' ')
-			CASKS_FAILED=$(grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CASK}_casks_fetch_results" | awk -F',' '$2=="false"' | wc -l | tr -d ' ')
+			CASKS_TOTAL=$(/usr/bin/grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CASK}_casks_fetch_results" | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+			CASKS_SUCCESS=$(/usr/bin/grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CASK}_casks_fetch_results" | /usr/bin/awk -F',' '${2}=="true"' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+			CASKS_FAILED=$(/usr/bin/grep -v '^#' "${BREW_SLUSH_HOME}/repos/${FREEZE_COMMIT_CASK}_casks_fetch_results" | /usr/bin/awk -F',' '${2}=="false"' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
 			echo "Casks:" >&2
 			echo "  Processed: ${CASKS_TOTAL}" >&2
 			echo "  Successful: ${CASKS_SUCCESS}" >&2
@@ -669,23 +669,23 @@ case ${FETCH_TYPE} in
 		echo "  Successful: ${COMBINED_SUCCESS}" >&2
 		echo "  Failed: ${COMBINED_FAILED}" >&2
 		
-		if [[ ${COMBINED_TOTAL} -gt 0 ]]; then
+		if [[ "${COMBINED_TOTAL}" -gt 0 ]]; then
 			SUCCESS_RATE=$((COMBINED_SUCCESS * 100 / COMBINED_TOTAL))
 			echo "  Success rate: ${SUCCESS_RATE}%" >&2
 		fi
 		
 		echo "═══════════════════════════════════════════════════════════════" >&2
 		
-		if [[ ${FORMULAE_RESULT} -ne 0 ]] || [[ ${CASKS_RESULT} -ne 0 ]]; then
+		if [[ "${FORMULAE_RESULT}" -ne 0 ]] || [[ "${CASKS_RESULT}" -ne 0 ]]; then
 			exit 1
 		fi
 		;;
 esac
 
 # Final elapsed time if not already shown
-if [[ ${FETCH_TYPE} != "both" ]]; then
-	elapsed=$(($(date +%s) - START_TIME))
-	echo "" >&2
-	echo "End time: $(date)" >&2
+if [[ "${FETCH_TYPE}" != "both" ]]; then
+elapsed=$(($(/bin/date +%s) - START_TIME))
+echo "" >&2
+echo "End time: $(/bin/date)" >&2
 	echo "Total runtime: ${elapsed}s ($((elapsed / 60))m $((elapsed % 60))s)" >&2
 fi

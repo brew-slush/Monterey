@@ -1,24 +1,24 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 set -e
 
 # === FUNCTIONS ===
 cleanup() {
-    if [ "${MOUNTED_IN_SCRIPT:-false}" = "true" ] && [ -n "${MOUNT_PATH:-}" ]; then
-        echo "  Cleaning up mount: $MOUNT_PATH" >&2
-        hdiutil detach "$MOUNT_PATH" 2>/dev/null || true
+    if [[ "${MOUNTED_IN_SCRIPT:-false}" = "true" ]] && [[ -n "${MOUNT_PATH:-}" ]]; then
+        echo "  Cleaning up mount: ${MOUNT_PATH}" >&2
+        hdiutil detach "${MOUNT_PATH}" 2>/dev/null || true
     fi
     rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress 2>/dev/null || true
 }
 
 kill_installer_and_tail() {
-    if [ -n "${TAIL_PID:-}" ]; then
-        kill $TAIL_PID 2>/dev/null || true
-        wait $TAIL_PID 2>/dev/null || true
+    if [[ -n "${TAIL_PID:-}" ]]; then
+        kill "${TAIL_PID}" 2>/dev/null || true
+        wait "${TAIL_PID}" 2>/dev/null || true
     fi
-    if [ -n "${INSTALLER_PID:-}" ]; then
-        sudo kill $INSTALLER_PID 2>/dev/null || true
-        wait $INSTALLER_PID 2>/dev/null || true
+    if [[ -n "${INSTALLER_PID:-}" ]]; then
+        sudo kill "${INSTALLER_PID}" 2>/dev/null || true
+        wait "${INSTALLER_PID}" 2>/dev/null || true
     fi
 }
 
@@ -35,7 +35,7 @@ handle_interrupt() {
 
 is_installed() {
     pkgutil --pkg-info com.apple.pkg.CLTools_Executables &>/dev/null || \
-    [ -e "/Library/Developer/CommandLineTools/usr/bin/clang" ]
+    [[ -e "/Library/Developer/CommandLineTools/usr/bin/clang" ]]
 }
 
 # === MAIN ===
@@ -53,38 +53,38 @@ EOF
     
     # Architecture detection
     ARCH=$(uname -m)
-    PROC=$([[ "$ARCH" == "arm64" ]] && echo "ARM" || echo "Intel")
-    echo "Architecture: $ARCH, Processor: $PROC"
+    PROC=$([[ "${ARCH}" == "arm64" ]] && echo "ARM" || echo "Intel")
+    echo "Architecture: ${ARCH}, Processor: ${PROC}"
     
     # === ARGUMENT HANDLING ===
     DMG_PATH=""
-    if [ -n "${1:-}" ] && [ "$1" != "--no-progress" ]; then
-        DMG_PATH="$1"
+    if [[ -n "${1:-}" ]] && [[ "${1}" != "--no-progress" ]]; then
+        DMG_PATH="${1}"
     fi
     
     # Default DMG path handling
-    if [ -z "$DMG_PATH" ]; then
-        SCRIPT_DIR="$( cd "$( dirname "$0" )" && pwd )"
-        MOUNT="$( cd "${SCRIPT_DIR}/.." && pwd )"
+    if [[ -z "${DMG_PATH}" ]]; then
+        SCRIPT_DIR="$( cd "$( dirname "${0}" )" && pwd )"
+        MOUNT="$( cd ""${SCRIPT_DIR}"/.." && pwd )"
         DMG_PATH=$(find "${MOUNT}/software/${PROC}" -name "Command_Line_Tools_*.dmg" -type f | head -n1)
     fi
     
-    echo "Using DMG: $DMG_PATH"
+    echo "Using DMG: ${DMG_PATH}"
     
     # Validate DMG
-    if [ ! -f "$DMG_PATH" ]; then 
-        echo "✗ Error: DMG not found at $DMG_PATH" >&2
+    if [[ ! -f "${DMG_PATH}" ]]; then 
+        echo "✗ Error: DMG not found at ${DMG_PATH}" >&2
         exit 1
     fi
     
-    if [ ! -r "$DMG_PATH" ]; then
+    if [[ ! -r "${DMG_PATH}" ]]; then
         echo "✗ Error: DMG not readable" >&2
-        ls -la "$DMG_PATH" >&2
+        ls -la "${DMG_PATH}" >&2
         exit 1
     fi
 
     # Simple mode
-    if [ "${1:-}" = "--no-progress" ]; then
+    if [[ "${1:-}" = "--no-progress" ]]; then
         if is_installed; then
             echo "✓ Command Line Tools already installed."
             exit 0
@@ -96,18 +96,18 @@ EOF
         # Mount DMG
         echo "  • Mounting DMG..."
         MOUNT_PATH="/Volumes/CLT_$$"
-        hdiutil mount -readonly -quiet -nobrowse -mountpoint "$MOUNT_PATH" "$DMG_PATH" || {
+        hdiutil mount -readonly -quiet -nobrowse -mountpoint "${MOUNT_PATH}" "${DMG_PATH}" || {
             echo "  ✗ Mount failed" >&2
             exit 1
         }
         
-        PKG_PATH=$(find "$MOUNT_PATH" -name "*.pkg" -type f | head -n1)
+        PKG_PATH=$(find "${MOUNT_PATH}" -name "*.pkg" -type f | head -n1)
         
         # Run installer with direct output
         echo "  • Running installer..."
-        sudo installer -pkg "$PKG_PATH" -target / -verboseR
+        sudo installer -pkg "${PKG_PATH}" -target / -verboseR
         
-        hdiutil detach "$MOUNT_PATH" 2>/dev/null || true
+        hdiutil detach "${MOUNT_PATH}" 2>/dev/null || true
         
         # Check if installed
         if is_installed; then
@@ -124,7 +124,7 @@ EOF
     if is_installed; then
         echo "✓ Command Line Tools already installed."
         if path=$(xcode-select --print-path 2>/dev/null); then
-            echo "  Path: $path"
+            echo "  Path: ${path}"
         fi
         exit 0
     fi
@@ -142,14 +142,14 @@ EOF
     # Clean up existing mounts
     echo "  • Checking for existing mounts..."
     MOUNTED_IN_SCRIPT=false
-    EXISTING_MOUNTS=$(hdiutil info | grep -B 5 "$DMG_PATH" | grep '^/Volumes/' | awk '{print $NF}' || true)
+    EXISTING_MOUNTS=$(hdiutil info | grep -B 5 "${DMG_PATH}" | grep '^/Volumes/' | awk '{print ${NF}}' || true)
     
-    if [ -n "$EXISTING_MOUNTS" ]; then
+    if [[ -n "${EXISTING_MOUNTS}" ]]; then
         echo "  • Unmounting existing mounts..."
-        echo "$EXISTING_MOUNTS" | while IFS= read -r mount_point; do
-            if [ -n "$mount_point" ]; then
-                echo "    - $mount_point"
-                hdiutil detach "$mount_point" 2>/dev/null || true
+        echo "${EXISTING_MOUNTS}" | while IFS= read -r mount_point; do
+            if [[ -n "${mount_point}" ]]; then
+                echo "    - ${mount_point}"
+                hdiutil detach "${mount_point}" 2>/dev/null || true
             fi
         done
         sleep 2
@@ -159,19 +159,19 @@ EOF
     echo "  • Mounting DMG..."
     MOUNT_PATH="/Volumes/CLT_$$"
     
-    if ! hdiutil mount -readonly -quiet -nobrowse -mountpoint "$MOUNT_PATH" "$DMG_PATH"; then
+    if ! hdiutil mount -readonly -quiet -nobrowse -mountpoint "${MOUNT_PATH}" "${DMG_PATH}"; then
         echo "  • Mount failed. Trying standard attach..." >&2
-        MOUNT_OUTPUT=$(hdiutil attach -nobrowse "$DMG_PATH" 2>&1)
+        MOUNT_OUTPUT=$(hdiutil attach -nobrowse "${DMG_PATH}" 2>&1)
         
-        if [ $? -ne 0 ]; then
+        if [[ $? -ne 0 ]]; then
             echo "  ✗ ERROR: Failed to mount DMG" >&2
             exit 1
         fi
         
         MOUNTED_IN_SCRIPT=true
-        MOUNT_PATH=$(echo "$MOUNT_OUTPUT" | grep '/Volumes/' | awk '{print $NF}' | tail -n1)
+        MOUNT_PATH=$(echo "${MOUNT_OUTPUT}" | grep '/Volumes/' | awk '{print ${NF}}' | tail -n1)
         
-        if [ -z "$MOUNT_PATH" ]; then
+        if [[ -z "${MOUNT_PATH}" ]]; then
             sleep 1
             MOUNT_PATH=$(find /Volumes -maxdepth 1 -type d -name "*Command*Line*" | head -n1)
         fi
@@ -179,24 +179,24 @@ EOF
         MOUNTED_IN_SCRIPT=true
     fi
     
-    if [ ! -d "$MOUNT_PATH" ]; then
-        echo "  ✗ ERROR: Mount point doesn't exist: $MOUNT_PATH" >&2
+    if [[ ! -d "${MOUNT_PATH}" ]]; then
+        echo "  ✗ ERROR: Mount point doesn't exist: ${MOUNT_PATH}" >&2
         exit 1
     fi
     
-    echo "  • Mounted at: $MOUNT_PATH"
+    echo "  • Mounted at: ${MOUNT_PATH}"
     
     # Find package
-    PKG_PATH=$(find "$MOUNT_PATH" -maxdepth 1 -name "*.pkg" -type f | head -n1)
-    if [ -z "$PKG_PATH" ]; then
-        echo "  ✗ ERROR: No .pkg file found in $MOUNT_PATH" >&2
+    PKG_PATH=$(find "${MOUNT_PATH}" -maxdepth 1 -name "*.pkg" -type f | head -n1)
+    if [[ -z "${PKG_PATH}" ]]; then
+        echo "  ✗ ERROR: No .pkg file found in ${MOUNT_PATH}" >&2
         exit 1
     fi
     
     # === SCROLLING WINDOW WITH FOOTER ===
     LOG_FILE="/tmp/clt_install_$(date +%Y%m%d_%H%M%S).log"
-    echo "  • Installing: $(basename "$PKG_PATH")"
-    echo "  • Log file: $LOG_FILE"
+    echo "  • Installing: $(basename ""${PKG_PATH}"")"
+    echo "  • Log file: ${LOG_FILE}"
     echo ""
     
     # Get terminal dimensions
@@ -219,7 +219,7 @@ EOF
     WINDOW_HEIGHT=10
     
     # Start installer
-    sudo installer -pkg "$PKG_PATH" -target / -verboseR > "$LOG_FILE" 2>&1 &
+    sudo installer -pkg "${PKG_PATH}" -target / -verboseR > "${LOG_FILE}" 2>&1 &
     INSTALLER_PID=$!
     
     # Tail process with footer
@@ -232,8 +232,8 @@ EOF
             printf "\033[$((WINDOW_START_LINE + 2));0H"
             
             # Show log lines (leave room for footer)
-            if [ -f "$LOG_FILE" ]; then
-                tail -n $((WINDOW_HEIGHT - 3)) "$LOG_FILE" 2>/dev/null || echo "Waiting..."
+            if [[ -f "${LOG_FILE}" ]]; then
+                tail -n $((WINDOW_HEIGHT - 3)) "${LOG_FILE}" 2>/dev/null || echo "Waiting..."
             else
                 echo "Waiting for installer to start..."
             fi
@@ -242,20 +242,20 @@ EOF
             printf "\033[${CURRENT_LINE};0H"
             echo "───────────────────────────────────────────────────────────────"
             printf "\033[$((CURRENT_LINE + 1));0H"
-            echo " PID: $INSTALLER_PID | Press Ctrl+C to cancel"
+            echo " PID: ${INSTALLER_PID} | Press Ctrl+C to cancel"
         }
         
         display_window
         
         LAST_LINE_COUNT=0
         
-        while kill -0 "$INSTALLER_PID" 2>/dev/null; do
-            if [ -f "$LOG_FILE" ]; then
-                CURRENT_LINE_COUNT=$(wc -l < "$LOG_FILE")
+        while kill -0 "${INSTALLER_PID}" 2>/dev/null; do
+            if [[ -f "${LOG_FILE}" ]]; then
+                CURRENT_LINE_COUNT=$(wc -l < "${LOG_FILE}")
                 
-                if [ $CURRENT_LINE_COUNT -gt $LAST_LINE_COUNT ]; then
+                if [[ "${CURRENT_LINE_COUNT}" -gt "${LAST_LINE_COUNT}" ]]; then
                     display_window
-                    LAST_LINE_COUNT=$CURRENT_LINE_COUNT
+                    LAST_LINE_COUNT="${CURRENT_LINE_COUNT}"
                 fi
             fi
             
@@ -269,20 +269,20 @@ EOF
     TAIL_PID=$!
     
     # Wait for installer
-    wait "$INSTALLER_PID"
+    wait "${INSTALLER_PID}"
     INSTALL_RESULT=$?
     
     # Reset scrolling region
     printf "\033[r"
     
     # Clean up tail
-    kill "$TAIL_PID" 2>/dev/null
-    wait "$TAIL_PID" 2>/dev/null
+    kill "${TAIL_PID}" 2>/dev/null
+    wait "${TAIL_PID}" 2>/dev/null
     
     # Clear and show final status
     printf "\033[2J\033[H"
     
-    if [ $INSTALL_RESULT -ne 0 ]; then
+    if [[ "${INSTALL_RESULT}" -ne 0 ]]; then
         echo "✗ ERROR: Installer failed" >&2
         exit 1
     fi
@@ -295,9 +295,8 @@ EOF
         exit 1
     fi
     
-    echo "Full log: $LOG_FILE"
+    echo "Full log: ${LOG_FILE}"
 }
 
 # Run main
-main "$@"
-
+main "${@}"

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 # shellcheck disable=SC2312
 ver=$(sw_vers -productVersion | cut -d. -f1)

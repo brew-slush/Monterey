@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 START_TIME=$(date +%s)
 MOUNT_DIR="${MOUNT_DIR:-/Volumes/Monterey}"
@@ -10,17 +10,17 @@ WINDOW_SIZE=10
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
-	case $1 in
+	case "${1}" in
 	--window)
-		WINDOW_SIZE="$2"
-		if ! [[ ${WINDOW_SIZE} =~ ^[0-9]+$ ]] || [[ ${WINDOW_SIZE} -lt 1 ]]; then
+		WINDOW_SIZE="${2}"
+		if ! [[ "${WINDOW_SIZE}" =~ ^[0-9]+$ ]] || [[ "${WINDOW_SIZE}" -lt 1 ]]; then
 			echo "ERROR: --window must be a positive integer"
 			exit 1
 		fi
 		shift 2
 		;;
 	*)
-		INPUT_FILE="$1"
+		INPUT_FILE="${1}"
 		shift
 		;;
 	esac
@@ -28,31 +28,31 @@ done
 
 # Get the freeze commit from homebrew-core repo
 HOMEBREW_CORE_DIR="${MOUNT_DIR}/repos/homebrew-core"
-if [[ ! -d ${HOMEBREW_CORE_DIR} ]]; then
+if [[ ! -d "${HOMEBREW_CORE_DIR}" ]]; then
 	echo "ERROR: Homebrew core repository not found at ${HOMEBREW_CORE_DIR}"
 	exit 1
 fi
 
 FREEZE_COMMIT=$(cd "${HOMEBREW_CORE_DIR}" && git rev-parse --short HEAD 2>/dev/null)
-if [[ -z ${FREEZE_COMMIT} ]]; then
+if [[ -z "${FREEZE_COMMIT}" ]]; then
 	echo "ERROR: Could not determine freeze commit from ${HOMEBREW_CORE_DIR}"
 	exit 1
 fi
 
 # Determine input file
-if [[ -n ${INPUT_FILE} ]]; then
-	if [[ ! -f ${INPUT_FILE} ]]; then
+if [[ -n "${INPUT_FILE}" ]]; then
+	if [[ ! -f "${INPUT_FILE}" ]]; then
 		echo "ERROR: Input file not found: ${INPUT_FILE}"
 		exit 1
 	fi
 	echo "Using input file: ${INPUT_FILE}"
 else
 	INPUT_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_roots"
-	if [[ ! -f ${INPUT_FILE} ]]; then
+	if [[ ! -f "${INPUT_FILE}" ]]; then
 		echo "ERROR: Roots index not found at ${INPUT_FILE}"
 		echo "Using all formulae index instead"
 		INPUT_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_all"
-		if [[ ! -f ${INPUT_FILE} ]]; then
+		if [[ ! -f "${INPUT_FILE}" ]]; then
 			echo "ERROR: No index file found"
 			exit 1
 		fi
@@ -72,11 +72,11 @@ fi
 # Function to add or update formula result in memory
 # Usage: add_fetch_result "formula_name" "true/false" "true/false" "true/false" "error message or empty"
 add_fetch_result() {
-	local formula="$1"
-	local has_bottle="$2"
-	local has_source="$3"
-	local platform_specific="$4"
-	local error_msg="$5"
+	local formula="${1}"
+	local has_bottle="${2}"
+	local has_source="${3}"
+	local platform_specific="${4}"
+	local error_msg="${5}"
 
 	# Normalize formula name (remove homebrew/core/ prefix if present)
 	formula="${formula#homebrew/core/}"
@@ -91,7 +91,7 @@ add_fetch_result() {
 # Load no-platform index for platform detection (but don't filter yet)
 NOPLATFORM_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_noplatform"
 NOPLATFORM_TEMP=$(mktemp)
-if [[ -f ${NOPLATFORM_FILE} ]]; then
+if [[ -f "${NOPLATFORM_FILE}" ]]; then
 	echo "Loading platform information..."
 	# Skip comment lines and create a temp file with just formula names for grep
 	grep -v '^#' "${NOPLATFORM_FILE}" | cut -d',' -f1 >"${NOPLATFORM_TEMP}"
@@ -100,12 +100,12 @@ if [[ -f ${NOPLATFORM_FILE} ]]; then
 
 	# Function to check if formula is in noplatform list
 	is_noplatform() {
-		grep -qxF "$1" "${NOPLATFORM_TEMP}"
+		grep -qxF "${1}" "${NOPLATFORM_TEMP}"
 	}
 
 	# Function to get platforms for a formula
 	get_platforms() {
-		grep "^$1," "${NOPLATFORM_FILE}" | cut -d',' -f2
+		grep "^${1}," "${NOPLATFORM_FILE}" | cut -d',' -f2
 	}
 
 	# Create filtered input file (exclude platform-incompatible formulae)
@@ -115,9 +115,9 @@ if [[ -f ${NOPLATFORM_FILE} ]]; then
 			echo "${formula}"
 		fi
 	done <"${INPUT_FILE}" >"${FILTERED_INPUT}"
-	EXCLUDED_COUNT=${NOPLATFORM_COUNT}
+	EXCLUDED_COUNT="${NOPLATFORM_COUNT}"
 	INPUT_FILE="${FILTERED_INPUT}"
-	echo "Filtered to $(wc -l <"${INPUT_FILE}") formulae (excluded ${EXCLUDED_COUNT} without platform bottles)"
+	echo "Filtered to $(wc -l <""${INPUT_FILE}"") formulae (excluded ${EXCLUDED_COUNT} without platform bottles)"
 fi
 
 echo "Window size: ${WINDOW_SIZE} formulae per batch"
@@ -127,12 +127,12 @@ CACHE_DIR="$(brew --cache)/downloads"
 
 # Recursive function to fetch a batch, retrying with failures removed
 fetch_batch() {
-	local batch="$1"
-	local indent="$2"
+	local batch="${1}"
+	local indent="${2}"
 	local count
 	count=$(echo "${batch}" | wc -w | tr -d ' ')
 
-	if [[ ${count} -eq 0 ]]; then
+	if [[ "${count}" -eq 0 ]]; then
 		return 0
 	fi
 
@@ -140,7 +140,7 @@ fetch_batch() {
 	local already_cached=()
 	local need_fetch=()
 
-	for formula in ${batch}; do
+	for formula in "${batch}"; do
 		if find "${CACHE_DIR}" -name "*--${formula}--*.bottle*.tar.gz" -print -quit 2>/dev/null | grep -q .; then
 			already_cached+=("${formula}")
 			add_fetch_result "${formula}" "true" "false" "false" ""
@@ -150,8 +150,8 @@ fetch_batch() {
 	done
 
 	# Report cached bottles
-	if [[ ${#already_cached[@]} -gt 0 ]]; then
-		if [[ ${#already_cached[@]} -eq 1 ]]; then
+	if [[ "${#already_cached[@]}" -gt 0 ]]; then
+		if [[ "${#already_cached[@]}" -eq 1 ]]; then
 			echo "${indent}↻ Already cached ${#already_cached[@]} bottle: ${already_cached[*]}" >&2
 		else
 			echo "${indent}↻ Already cached ${#already_cached[@]} bottles" >&2
@@ -269,15 +269,15 @@ fetch_batch() {
 		remaining_count=$(echo "${remaining}" | wc -w | tr -d ' ')
 
 		# Safety check: if we didn't actually remove anything, abort to prevent infinite loop
-		if [[ ${remaining_count} -ge ${count} ]]; then
+		if [[ "${remaining_count}" -ge "${count}" ]]; then
 			echo "${indent}ERROR: Could not remove failed formula from batch, aborting to prevent infinite loop" >&2
 			echo "${indent}Batch: ${fetch_batch_str}" >&2
 			echo "${indent}Failed: ${failed}" >&2
 			return 1
 		fi
 
-		if [[ ${remaining_count} -gt 0 ]]; then
-			if [[ ${remaining_count} -eq 1 ]]; then
+		if [[ "${remaining_count}" -gt 0 ]]; then
+			if [[ "${remaining_count}" -eq 1 ]]; then
 				echo "${indent}→ Retrying with ${remaining_count} formula..." >&2
 			else
 				echo "${indent}→ Retrying with ${remaining_count} formulae..." >&2
@@ -399,10 +399,10 @@ fi
 echo "" >&2
 echo "=== Summary ===" >&2
 TOTAL_RESULTS=$(grep -v '^#' "${FETCH_RESULTS}" | wc -l | tr -d ' ')
-BOTTLES_COUNT=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$2=="true"' | wc -l | tr -d ' ')
-SOURCES_COUNT=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$2=="false" && $3=="true"' | wc -l | tr -d ' ')
-PLATFORM_SPECIFIC_COUNT=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$4=="true"' | wc -l | tr -d ' ')
-ERRORS_COUNT=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '$5!=""' | wc -l | tr -d ' ')
+BOTTLES_COUNT=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '"${2}"=="true"' | wc -l | tr -d ' ')
+SOURCES_COUNT=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '"${2}"=="false" && "${3}"=="true"' | wc -l | tr -d ' ')
+PLATFORM_SPECIFIC_COUNT=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '"${4}"=="true"' | wc -l | tr -d ' ')
+ERRORS_COUNT=$(grep -v '^#' "${FETCH_RESULTS}" | awk -F',' '"${5}"!=""' | wc -l | tr -d ' ')
 echo "Fetch results saved to: ${FETCH_RESULTS}" >&2
 echo "Total formulae processed: ${TOTAL_RESULTS}" >&2
 echo "Bottles downloaded: ${BOTTLES_COUNT}" >&2
