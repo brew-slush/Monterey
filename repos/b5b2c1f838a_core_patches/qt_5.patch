@@ -1,0 +1,12 @@
+diff --git a/Formula/q/qt@5.rb b/Formula/q/qt@5.rb
+index da8e3d8..8d43e44 100644
+--- a/Formula/q/qt@5.rb
++++ b/Formula/q/qt@5.rb
+@@ -36,7 +36,6 @@ class QtAT5 < Formula
+   depends_on "glib"
+   depends_on "jpeg-turbo"
+   depends_on "libpng"
+-  depends_on macos: :sierra
+   depends_on "pcre2"
+   depends_on "webp"
+ 

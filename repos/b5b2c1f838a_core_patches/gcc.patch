@@ -1,0 +1,14 @@
+diff --git a/Formula/g/gcc.rb b/Formula/g/gcc.rb
+index 0838a6a..269b986 100644
+--- a/Formula/g/gcc.rb
++++ b/Formula/g/gcc.rb
+@@ -55,9 +55,6 @@ class Gcc < Formula
+     depends_on "binutils"
+   end
+ 
+-  # GCC bootstraps itself, so it is OK to have an incompatible C++ stdlib
+-  cxxstdlib_check :skip
+-
+   def version_suffix
+     if build.head?
+       "HEAD"
