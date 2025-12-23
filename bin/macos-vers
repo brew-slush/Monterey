@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# shellcheck disable=SC2312
+ver=$(sw_vers -productVersion | cut -d. -f1)
+
+case "${ver}" in
+  12) echo "Monterey" ;;
+  13) echo "Ventura" ;;
+  14) echo "Sonoma" ;;
+  15) echo "Sequoia" ;;
+  26) echo "Tahoe" ;;  # macOS version 26 → Tahoe
+  *) echo "Unknown macOS version: ${ver}" ;;
+esac

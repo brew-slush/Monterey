@@ -5,6 +5,9 @@
     "brewconfig",
     "cxxstdlib",
     "FILELIST",
+    "LOGBASE",
+    "LOGFILE",
+    "LOGNUM",
     "Noarch",
     "NOARCH",
     "nodeps",
@@ -14,6 +17,7 @@
     "texinfo",
     "xattrs",
     "xcinfo",
+    "xdev",
     "xzpf"
   ]
 }

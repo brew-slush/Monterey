@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 # Set paths for Intel Mac
 export HOMEBREW_PREFIX="/usr/local"
@@ -20,7 +20,7 @@ cd || exit
 sudo ln -s /usr/local/Homebrew/bin/brew /usr/local/bin/
 
 # Add to PATH (if not already there)
-if [[ ! ${PATH} =~ "/usr/local/bin" ]]; then
+if [[ ! "${PATH}" =~ "/usr/local/bin" ]]; then
 	# shellcheck disable=SC2016
 	echo 'export PATH="/usr/local/bin:${PATH}"' >>~/.zshrc
 fi

@@ -42,23 +42,23 @@ There's a brew `backup-restore` script included to backup and restore your exist
 
 ```bash
 # Do it carefully step by step!
-bash ${MOUNT_POINT}/bin/backup-restore --backup
+bash ${BREW_SLUSH_HOME}/bin/backup-restore --backup
 # To verify restore will work later but not restore yet
-bash ${MOUNT_POINT}/bin/backup-restore --restore --source "${MOUNT_POINT}/backups/$(hostname)/${backup_directory}"
+bash ${BREW_SLUSH_HOME}/bin/backup-restore --restore --source "${BREW_SLUSH_HOME}/backups/$(hostname)/${backup_directory}"
 # Check the backup then wipe the existing installation
-bash ${MOUNT_POINT}/bin/backup-restore --clean-only --source "${MOUNT_POINT}/backups/$(hostname)/${backup_directory}"
+bash ${BREW_SLUSH_HOME}/bin/backup-restore --clean-only --source "${BREW_SLUSH_HOME}/backups/$(hostname)/${backup_directory}"
 
 
 # Or just do the both operations in one go
-bash ${MOUNT_POINT}/bin/backup-restore --backup --clean --source "${MOUNT_POINT}/backups/$(hostname)/${backup_directory}"
+bash ${BREW_SLUSH_HOME}/bin/backup-restore --backup --clean --source "${BREW_SLUSH_HOME}/backups/$(hostname)/${backup_directory}"
 # Straight up restore
-bash ${MOUNT_POINT}/bin/backup-restore --restore --apply --source "${MOUNT_POINT}/backups/$(hostname)/${backup_directory}"
+bash ${BREW_SLUSH_HOME}/bin/backup-restore --restore --apply --source "${BREW_SLUSH_HOME}/backups/$(hostname)/${backup_directory}"
 ```
 
 >**WARNING**: We take no responsibility for borked systems. Use at your own risk. Always take a backup before even using these tools. With that said, attention was given to the `backup-restore` script with some testing and it works well, but it may not work for you depending on your existing Homebrew installation.
 
 ```bash
-bash ${MOUNT_POINT}/bin/install
+bash ${BREW_SLUSH_HOME}/bin/install
 ```
 
 This will install Homebrew from the frozen repositories on the mounted share and set up the environment to use them. You can now use Homebrew as normal on your Monterey machine. You can use the Brewfile from your backup to restore your past brew installation's installed packages but at the versions available at the time of freezing.
@@ -73,13 +73,13 @@ By default, fetches both formulae and casks:
 
 ```bash
 # Fetch both formulae and casks (default)
-bash ${MOUNT_POINT}/bin/batch-fetch
+bash ${BREW_SLUSH_HOME}/bin/batch-fetch
 
 # Fetch only formulae
-bash ${MOUNT_POINT}/bin/batch-fetch --type formulae
+bash ${BREW_SLUSH_HOME}/bin/batch-fetch --type formulae
 
 # Fetch only casks
-bash ${MOUNT_POINT}/bin/batch-fetch --type casks
+bash ${BREW_SLUSH_HOME}/bin/batch-fetch --type casks
 ```
 
 ### Resumable Mode for Cron Jobs
@@ -88,22 +88,22 @@ The script supports resumable mode which saves progress and allows you to stop a
 
 ```bash
 # Enable resumable mode with 2-hour runtime limit (fetches both formulae and casks)
-bash ${MOUNT_POINT}/bin/batch-fetch --resumable --max-runtime 2h
+bash ${BREW_SLUSH_HOME}/bin/batch-fetch --resumable --max-runtime 2h
 
 # Fetch only formulae
-bash ${MOUNT_POINT}/bin/batch-fetch --resumable --type formulae --max-runtime 2h
+bash ${BREW_SLUSH_HOME}/bin/batch-fetch --resumable --type formulae --max-runtime 2h
 
 # Fetch only casks
-bash ${MOUNT_POINT}/bin/batch-fetch --resumable --type casks --max-runtime 2h
+bash ${BREW_SLUSH_HOME}/bin/batch-fetch --resumable --type casks --max-runtime 2h
 
 # Process specific number of batches then exit
-bash ${MOUNT_POINT}/bin/batch-fetch --resumable --max-batches 50
+bash ${BREW_SLUSH_HOME}/bin/batch-fetch --resumable --max-batches 50
 
 # Reset state and start over (resets both formulae and casks state)
-bash ${MOUNT_POINT}/bin/batch-fetch --resumable --reset
+bash ${BREW_SLUSH_HOME}/bin/batch-fetch --resumable --reset
 
 # Custom window size
-bash ${MOUNT_POINT}/bin/batch-fetch --resumable --window 20 --max-runtime 1h
+bash ${BREW_SLUSH_HOME}/bin/batch-fetch --resumable --window 20 --max-runtime 1h
 ```
 
 **Note:** When using `--type both` (the default), the script processes formulae first, then casks sequentially. Each type maintains its own state file, so you can stop and resume independently. The state files are named `.batch-fetch-state-formulae-<commit>` and `.batch-fetch-state-casks-<commit>` in the repos directory.
@@ -141,7 +141,7 @@ macOS supports both traditional cron and the modern launchd system. **launchd is
 
 #### Option 1: Using launchd (Recommended)
 
-Create a launch agent plist file at `~/Library/LaunchAgents/com.monterey.batch-fetch.plist`:
+Create a launch agent plist file at `~/Library/LaunchAgents/org.brew-slush.batch-fetch.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -149,12 +149,12 @@ Create a launch agent plist file at `~/Library/LaunchAgents/com.monterey.batch-f
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.monterey.batch-fetch</string>
+    <string>org.brew-slush.batch-fetch</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Volumes/Monterey/bin/batch-fetch</string>
+        <string>/Volumes/BrewSlush/Monterey/bin/batch-fetch</string>
         <string>--resumable</string>
         <string>--max-runtime</string>
         <string>2h</string>
@@ -191,8 +191,8 @@ Create a launch agent plist file at `~/Library/LaunchAgents/com.monterey.batch-f
 
     <key>EnvironmentVariables</key>
     <dict>
-        <key>MOUNT_POINT</key>
-        <string>/Volumes/Monterey</string>
+        <key>BREW_SLUSH_HOME</key>
+        <string>/Volumes/BrewSlush/Monterey</string>
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
@@ -211,13 +211,13 @@ Create a launch agent plist file at `~/Library/LaunchAgents/com.monterey.batch-f
 Load the launch agent:
 
 ```bash
-launchctl load ~/Library/LaunchAgents/com.monterey.batch-fetch.plist
+launchctl load ~/Library/LaunchAgents/org.brew-slush.batch-fetch.plist
 
 # Check if it's loaded
-launchctl list | grep monterey
+launchctl list | grep brew-slush
 
 # Test run immediately
-launchctl start com.monterey.batch-fetch
+launchctl start org.brew-slush.batch-fetch
 
 # View logs
 tail -f /tmp/batch-fetch.log
@@ -240,13 +240,13 @@ Add schedule (note: use full paths):
 
 ```bash
 # Run for 1 hour at lunch time (12 PM) on weekdays
-0 12 * * 1-5 /bin/bash /Volumes/Monterey/bin/batch-fetch --resumable --max-runtime 1h
+0 12 * * 1-5 /bin/bash /Volumes/BrewSlush/Monterey/bin/batch-fetch --resumable --max-runtime 1h
 
 # Run for 4 hours every evening (6 PM)
-0 18 * * * /bin/bash /Volumes/Monterey/bin/batch-fetch --resumable --max-runtime 4h
+0 18 * * * /bin/bash /Volumes/BrewSlush/Monterey/bin/batch-fetch --resumable --max-runtime 4h
 
 # Run overnight (11 PM on weekends)
-0 23 * * 6,0 /bin/bash /Volumes/Monterey/bin/batch-fetch --resumable --max-runtime 8h
+0 23 * * 6,0 /bin/bash /Volumes/BrewSlush/Monterey/bin/batch-fetch --resumable --max-runtime 8h
 ```
 
 View your crontab:

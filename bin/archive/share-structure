@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 MONTEREY_SHARE=/Volumes/Monterey
 
@@ -29,4 +29,3 @@ git checkout b5b2c1f838a8ea365c859e7bf53ed0745225733b
 git remote set-url origin file:///dev/null
 # Makes the repository bare, reverse it to shift the detached head (freeze line)
 git config --bool core.bare true
-

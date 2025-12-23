@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Verify Command Line Tools are present
 ls -la /Library/Developer/CommandLineTools/usr/bin/clang
 ls -la /Library/Developer/CommandLineTools/usr/bin/git
@@ -9,4 +9,3 @@ ls -la /Volumes/Monterey/repos/homebrew-core/.git
 
 # Check repository remotes (for verification)
 grep url /Volumes/Monterey/repos/*/.git/config
-

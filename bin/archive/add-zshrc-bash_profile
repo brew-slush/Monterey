@@ -13,4 +13,3 @@ export HOMEBREW_NO_ANALYTICS=1
 
 # Optional: Use local cache directory
 export HOMEBREW_CACHE="/Volumes/Monterey/homebrew-cache"
-

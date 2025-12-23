@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 set -euo pipefail
 
@@ -6,13 +6,13 @@ MOUNT_DIR="${MOUNT_DIR:-/Volumes/Monterey}"
 
 # Get the freeze commit from homebrew-cask repo
 HOMEBREW_CASK_DIR="${MOUNT_DIR}/repos/homebrew-cask"
-if [[ ! -d ${HOMEBREW_CASK_DIR} ]]; then
+if [[ ! -d "${HOMEBREW_CASK_DIR}" ]]; then
 	echo "ERROR: Homebrew cask repository not found at ${HOMEBREW_CASK_DIR}"
 	exit 1
 fi
 
 FREEZE_COMMIT=$(cd "${HOMEBREW_CASK_DIR}" && git rev-parse --short HEAD 2>/dev/null)
-if [[ -z ${FREEZE_COMMIT} ]]; then
+if [[ -z "${FREEZE_COMMIT}" ]]; then
 	echo "ERROR: Could not determine freeze commit from ${HOMEBREW_CASK_DIR}"
 	exit 1
 fi
@@ -24,7 +24,7 @@ OUTPUT_FILE="${MOUNT_DIR}/repos/${FREEZE_COMMIT}_casks_all"
 
 # Check if Casks directory exists
 CASKS_DIR="${HOMEBREW_CASK_DIR}/Casks"
-if [[ ! -d ${CASKS_DIR} ]]; then
+if [[ ! -d "${CASKS_DIR}" ]]; then
 	echo "ERROR: Casks directory not found at ${CASKS_DIR}"
 	exit 1
 fi

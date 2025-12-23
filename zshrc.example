@@ -1,7 +1,7 @@
 BREW_SLUSH_HOME=/Volumes/Monterey
 export BREW_SLUSH_HOME
 
-# MS short for Monterey Share not Microsoft :-)
+# MS short for Monterey Share not Microsoft
 MS_BIN="${BREW_SLUSH_HOME}/bin"
 MS_DRIVERS="${BREW_SLUSH_HOME}/drivers"
 MS_DRIVERS_ARM="${MS_DRIVERS}/ARM"
@@ -47,4 +47,3 @@ export HOMEBREW_NO_WARNINGS=1
   export HOMEBREW_CACHE="${BREW_SLUSH_HOME}/cache/${PROC}/homebrew-cache"
   # export HOMEBREW_CELLAR="${BREW_SLUSH_HOME}/cache/${PROC}/homebrew-cellar"
 # fi
-

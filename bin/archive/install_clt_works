@@ -1,50 +1,50 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 set -e
 
 # === CONFIGURATION ===
-SCRIPT_DIR="$( cd "$( dirname "$0" )" && pwd )"
-MOUNT="$( cd "${SCRIPT_DIR}/.." && pwd )"
+SCRIPT_DIR="$( cd "$( dirname "${0}" )" && pwd )"
+MOUNT="$( cd ""${SCRIPT_DIR}"/.." && pwd )"
 
 # Architecture detection
 ARCH=$(uname -m)
-PROC=$([[ "$ARCH" == "arm64" ]] && echo "ARM" || echo "Intel")
-echo "Architecture: $ARCH, Processor: $PROC"
+PROC=$([[ "${ARCH}" == "arm64" ]] && echo "ARM" || echo "Intel")
+echo "Architecture: ${ARCH}, Processor: ${PROC}"
 
 # === ARGUMENT HANDLING ===
 USER_DMG_PATH="${1:-}"
 
-if [ -n "$USER_DMG_PATH" ]; then
-    DMG_PATH="$USER_DMG_PATH"
+if [[ -n "${USER_DMG_PATH}" ]]; then
+    DMG_PATH="${USER_DMG_PATH}"
 else
     DMG_PATH=$(find "${MOUNT}/software/${PROC}" -name "Command_Line_Tools_*.dmg" -type f | head -n1)
 fi
 
-echo "Using DMG: $DMG_PATH"
+echo "Using DMG: ${DMG_PATH}"
 
-if [ ! -f "$DMG_PATH" ]; then 
-    echo "Error: DMG not found at $DMG_PATH" >&2
+if [[ ! -f "${DMG_PATH}" ]]; then 
+    echo "Error: DMG not found at ${DMG_PATH}" >&2
     exit 1
 fi
 
-if [ ! -r "$DMG_PATH" ]; then
+if [[ ! -r "${DMG_PATH}" ]]; then
     echo "Error: DMG not readable" >&2
-    ls -la "$DMG_PATH" >&2
+    ls -la "${DMG_PATH}" >&2
     exit 1
 fi
 
 # === FUNCTIONS ===
 cleanup() {
-    if [ "${MOUNTED_IN_SCRIPT:-false}" = "true" ] && [ -n "${MOUNT_PATH:-}" ]; then
-        echo "Cleaning up mount: $MOUNT_PATH"
-        hdiutil detach "$MOUNT_PATH" 2>/dev/null || true
+    if [[ "${MOUNTED_IN_SCRIPT:-false}" = "true" ]] && [[ -n "${MOUNT_PATH:-}" ]]; then
+        echo "Cleaning up mount: ${MOUNT_PATH}"
+        hdiutil detach "${MOUNT_PATH}" 2>/dev/null || true
     fi
     rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress 2>/dev/null || true
 }
 
 is_installed() {
     pkgutil --pkg-info com.apple.pkg.CLTools_Executables &>/dev/null || \
-    [ -e "/Library/Developer/CommandLineTools/usr/bin/clang" ]
+    [[ -e "/Library/Developer/CommandLineTools/usr/bin/clang" ]]
 }
 
 # === MAIN ===
@@ -54,7 +54,7 @@ main() {
     if is_installed; then
         echo "✓ Command Line Tools already installed."
         if path=$(xcode-select --print-path 2>/dev/null); then
-            echo "  Path: $path"
+            echo "  Path: ${path}"
         fi
         exit 0
     fi
@@ -67,14 +67,14 @@ main() {
     
     # Clean up any existing mounts
     echo "  Checking for existing mounts..."
-    EXISTING_MOUNTS=$(hdiutil info | grep -B 5 "$DMG_PATH" | grep '^/Volumes/' | awk '{print $NF}' || true)
+    EXISTING_MOUNTS=$(hdiutil info | grep -B 5 "${DMG_PATH}" | grep '^/Volumes/' | awk '{print ${NF}}' || true)
     
-    if [ -n "$EXISTING_MOUNTS" ]; then
+    if [[ -n "${EXISTING_MOUNTS}" ]]; then
         echo "  Found existing mounts, unmounting..."
-        echo "$EXISTING_MOUNTS" | while IFS= read -r mount_point; do
-            if [ -n "$mount_point" ]; then
-                echo "    Unmounting $mount_point..."
-                hdiutil detach "$mount_point" 2>/dev/null || true
+        echo "${EXISTING_MOUNTS}" | while IFS= read -r mount_point; do
+            if [[ -n "${mount_point}" ]]; then
+                echo "    Unmounting ${mount_point}..."
+                hdiutil detach "${mount_point}" 2>/dev/null || true
             fi
         done
         sleep 2
@@ -84,20 +84,20 @@ main() {
     echo "  Mounting DMG..."
     MOUNT_PATH="/Volumes/CLT_$$"
     
-    if ! hdiutil mount -readonly -quiet -nobrowse -mountpoint "$MOUNT_PATH" "$DMG_PATH"; then
+    if ! hdiutil mount -readonly -quiet -nobrowse -mountpoint "${MOUNT_PATH}" "${DMG_PATH}"; then
         echo "  Mount failed. Trying standard attach..." >&2
-        MOUNT_OUTPUT=$(hdiutil attach -nobrowse "$DMG_PATH" 2>&1)
+        MOUNT_OUTPUT=$(hdiutil attach -nobrowse "${DMG_PATH}" 2>&1)
         
-        if [ $? -ne 0 ]; then
+        if [[ $? -ne 0 ]]; then
             echo "  ERROR: Failed to mount DMG" >&2
-            echo "  hdiutil output: $MOUNT_OUTPUT" >&2
+            echo "  hdiutil output: ${MOUNT_OUTPUT}" >&2
             exit 1
         fi
         
         MOUNTED_IN_SCRIPT=true
-        MOUNT_PATH=$(echo "$MOUNT_OUTPUT" | grep '/Volumes/' | awk '{print $NF}' | tail -n1)
+        MOUNT_PATH=$(echo "${MOUNT_OUTPUT}" | grep '/Volumes/' | awk '{print ${NF}}' | tail -n1)
         
-        if [ -z "$MOUNT_PATH" ]; then
+        if [[ -z "${MOUNT_PATH}" ]]; then
             # Fallback: search for mount
             sleep 1
             MOUNT_PATH=$(find /Volumes -maxdepth 1 -type d -name "*Command*Line*" | head -n1)
@@ -107,30 +107,30 @@ main() {
     fi
     
     # Verify mount
-    if [ ! -d "$MOUNT_PATH" ]; then
-        echo "  ERROR: Mount point doesn't exist: $MOUNT_PATH" >&2
+    if [[ ! -d "${MOUNT_PATH}" ]]; then
+        echo "  ERROR: Mount point doesn't exist: ${MOUNT_PATH}" >&2
         echo "  Current mounts:"
         mount | grep -i command >&2
         exit 1
     fi
     
-    echo "  Mounted at: $MOUNT_PATH"
+    echo "  Mounted at: ${MOUNT_PATH}"
     
     # Find package
-    PKG_PATH=$(find "$MOUNT_PATH" -maxdepth 1 -name "*.pkg" -type f | head -n1)
-    if [ -z "$PKG_PATH" ]; then
-        echo "  ERROR: No .pkg file found in $MOUNT_PATH" >&2
+    PKG_PATH=$(find "${MOUNT_PATH}" -maxdepth 1 -name "*.pkg" -type f | head -n1)
+    if [[ -z "${PKG_PATH}" ]]; then
+        echo "  ERROR: No .pkg file found in ${MOUNT_PATH}" >&2
         echo "  Contents:"
-        ls -la "$MOUNT_PATH" >&2
+        ls -la "${MOUNT_PATH}" >&2
         exit 1
     fi
     
-    echo "  Found package: $(basename "$PKG_PATH")"
+    echo "  Found package: $(basename ""${PKG_PATH}"")"
     echo "  Starting installation (this may take 5-10 minutes)..."
     echo "  Log file: /tmp/clt_install.log"
     
     # Run installer with output to both screen and log
-    if ! sudo installer -pkg "$PKG_PATH" -target / -verboseR > /tmp/clt_install.log 2>&1; then
+    if ! sudo installer -pkg "${PKG_PATH}" -target / -verboseR > /tmp/clt_install.log 2>&1; then
         echo "  ERROR: Installer failed" >&2
         echo "  Last 20 lines of log:" >&2
         tail -20 /tmp/clt_install.log >&2
@@ -146,7 +146,7 @@ main() {
     if is_installed; then
         echo "✓ Command Line Tools installed successfully!"
         if path=$(xcode-select --print-path 2>/dev/null); then
-            echo "  Path: $path"
+            echo "  Path: ${path}"
         fi
     else
         echo "✗ Installation verification failed" >&2
@@ -158,4 +158,4 @@ main() {
 
 # Set up trap and run
 trap cleanup EXIT
-main "$@"
+main "${@}"

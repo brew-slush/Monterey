@@ -1,17 +1,69 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# Do not change shebang to the proper /usr/bin/env bash form because we need to ensure
+# that this script runs with the system bash (v3.2) and not any missing bash installed via
+# Homebrew or other means.
 
-# Combined script to install Homebrew and create taps
+# Set up logging - tee all output to an enumerated log file and console
+LOGBASE="${HOME}/brew-install"
+LOGNUM=1
+while [[ -e "${LOGBASE}${LOGNUM}.log" ]]; do
+	LOGNUM=$((LOGNUM + 1))
+done
+LOGFILE="${LOGBASE}${LOGNUM}.log"
+echo "==> Logging all output to ${LOGFILE}"
+# shellcheck disable=SC2312
+exec > >(/usr/bin/tee "${LOGFILE}") 2>&1
+# shellcheck disable=SC2312
+echo "==> brew-install started at $(/bin/date)"
+
+# Can't have the shell be a Homebrew-installed shell during installation
+DSCL_OUTPUT=$(/usr/bin/dscl . -read /Users/"$(/usr/bin/whoami)" UserShell) || true
+ORIGINAL_SHELL=$(echo "${DSCL_OUTPUT}" | /usr/bin/awk '{print $2}')
+if [[ "${ORIGINAL_SHELL}" == "/usr/local/bin/"* ]] || [[ "${ORIGINAL_SHELL}" == "/opt/homebrew/"* ]]; then
+	echo "WARNING: Your current shell is installed via Homebrew (${ORIGINAL_SHELL})."
+	echo "         Temporarily changing your shell to /bin/zsh for this installation."
+	/usr/bin/chsh -s /bin/zsh
+	SHELL_CHANGED=true
+else
+	SHELL_CHANGED=false
+fi
+
+restore_shell() {
+	if [[ "${SHELL_CHANGED}" == "true" ]]; then
+		if [[ -x "${ORIGINAL_SHELL}" ]]; then
+			echo "==> Restoring original shell: ${ORIGINAL_SHELL}"
+			/usr/bin/chsh -s "${ORIGINAL_SHELL}"
+		else
+			echo "WARNING: Original shell ${ORIGINAL_SHELL} not found (brew package may not have installed)"
+			echo "         Keeping /bin/zsh as default shell"
+		fi
+	fi
+}
+
+trap restore_shell EXIT
+trap 'exit 1' INT TERM
+
+SCRIPT_DIR="$(cd "$(/usr/bin/dirname "${BASH_SOURCE[0]}")" && /bin/pwd)"
+if command -v brew >/dev/null 2>&1 || \
+	[[ -x "/usr/local/bin/brew" ]] || \
+	[[ -d "/usr/local/Homebrew" ]] || \
+	[[ -d "/opt/homebrew" ]]; then
+	echo "==> Existing Homebrew installation detected; backing up and cleaning..."
+	if ! "${SCRIPT_DIR}/backup-restore" --backup --clean; then
+		echo "ERROR: Backup/cleanup failed; aborting."
+		exit 1
+	fi
+fi
 
 # Check if Command Line Tools are installed, run install_clt if not
 echo "==> Checking for Command Line Tools..."
-if [ ! -x "/Library/Developer/CommandLineTools/usr/bin/clang" ]; then
+if [[ ! -x "/Library/Developer/CommandLineTools/usr/bin/clang" ]]; then
 	echo "==> Command Line Tools not found, running install_clt..."
-	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	"${SCRIPT_DIR}/install_clt"
 	CLT_STATUS=$?
-	if [ $CLT_STATUS -ne 0 ]; then
-		echo "ERROR: Command Line Tools installation failed with status $CLT_STATUS"
-		exit $CLT_STATUS
+	if [[ "${CLT_STATUS}" -ne 0 ]]; then
+		echo "ERROR: Command Line Tools installation failed with status ${CLT_STATUS}"
+		exit "${CLT_STATUS}"
 	fi
 	echo "==> Command Line Tools installed successfully"
 else
@@ -23,55 +75,111 @@ export HOMEBREW_PREFIX="/usr/local"
 export HOMEBREW_REPOSITORY="/usr/local/Homebrew"
 
 echo "==> Creating Homebrew directory structure..."
-sudo mkdir -p "${HOMEBREW_REPOSITORY}"
-sudo mkdir -p "${HOMEBREW_PREFIX}"/{bin,etc,include,lib,sbin,share,var,opt,Frameworks,Cellar,var/homebrew/linked}
+	/usr/bin/sudo /bin/mkdir -p "${HOMEBREW_REPOSITORY}"
+	/usr/bin/sudo /bin/mkdir -p "${HOMEBREW_PREFIX}"/{bin,etc,include,lib,sbin,share,var,opt,Frameworks,Cellar,var/homebrew/linked}
 
 # shellcheck disable=SC2312
-sudo chown -R "$(whoami)":wheel "${HOMEBREW_REPOSITORY}" "${HOMEBREW_PREFIX}"/{bin,etc,include,lib,sbin,share,var,opt,Frameworks,Cellar,var/homebrew/linked}
+/usr/bin/sudo /usr/sbin/chown -R "$(/usr/bin/whoami)":wheel "${HOMEBREW_REPOSITORY}" "${HOMEBREW_PREFIX}"/{bin,etc,include,lib,sbin,share,var,opt,Frameworks,Cellar,var/homebrew/linked}
 
 echo "==> Cloning Homebrew repository..."
 # Clone from your local repository
-git clone --depth=1 file:///Volumes/Monterey/repos/homebrew /usr/local/Homebrew
+BREW_SLUSH_HOME="${BREW_SLUSH_HOME:-/Volumes/BrewSlush/Monterey}"
+/usr/bin/git clone --depth=1 "file://${BREW_SLUSH_HOME}/repos/homebrew" /usr/local/Homebrew
 cd /usr/local/Homebrew || exit
-git config advice.detachedHead false
+/usr/bin/git config advice.detachedHead false
 cd || exit
 
 echo "==> Creating symlink..."
 # Create symlink
-sudo ln -s /usr/local/Homebrew/bin/brew /usr/local/bin/
+/usr/bin/sudo /bin/ln -s /usr/local/Homebrew/bin/brew /usr/local/bin/
+
+echo "==> Backing up shell configuration files..."
+# Backup shell config files before modifying them
+backup_shell_config() {
+	local file="${1}"
+	if [[ -f "${file}" ]]; then
+		local dir name backup counter
+		dir="$(/usr/bin/dirname "${file}")"
+		name="$(/usr/bin/basename "${file}")"
+		backup="${dir}/${name}.backup"
+		counter=1
+		while [[ -e "${backup}" ]]; do
+			backup="${dir}/${name}.backup${counter}"
+			counter=$((counter + 1))
+		done
+		echo "  Backing up ${file} -> ${backup}"
+		/bin/mv "${file}" "${backup}"
+	fi
+}
+
+for config_file in "${HOME}/.zshrc" "${HOME}/.bashrc" "${HOME}/.zprofile" "${HOME}/.bash_profile"; do
+	backup_shell_config "${config_file}"
+done
 
 echo "==> Configuring PATH..."
-# Add to PATH (if not already there)
-if [[ ! ${PATH} =~ "/usr/local/bin" ]]; then
-	# shellcheck disable=SC2016
-	echo 'export PATH="/usr/local/bin:${PATH}"' >>~/.zshrc
+# Add to PATH (if not already in .zshrc)
+# shellcheck disable=SC2016
+PATH_EXPORT_LINE='export PATH="/usr/local/bin:${PATH}"'
+if [[ ! -f ~/.zshrc ]] || ! /usr/bin/grep -qF "${PATH_EXPORT_LINE}" ~/.zshrc; then
+	echo "${PATH_EXPORT_LINE}" >>~/.zshrc
+	echo "  Added PATH export to ~/.zshrc"
+else
+	echo "  PATH export already present in ~/.zshrc"
 fi
 
-cat /Volumes/Monterey/zshrc.example >>~/.zshrc
+# Add zshrc.example content (if not already present, detected by BREW_SLUSH_HOME marker)
+if [[ ! -f ~/.zshrc ]] || ! /usr/bin/grep -q '^BREW_SLUSH_HOME=' ~/.zshrc; then
+	/bin/cat "${BREW_SLUSH_HOME}/zshrc.example" >>~/.zshrc
+	echo "  Added brew-slush configuration to ~/.zshrc"
+else
+	echo "  Brew-slush configuration already present in ~/.zshrc"
+fi
+
+# Add zshrc.example content to .bashrc as well (for bash users)
+if [[ ! -f ~/.bashrc ]] || ! /usr/bin/grep -q '^BREW_SLUSH_HOME=' ~/.bashrc; then
+	/bin/cat "${BREW_SLUSH_HOME}/zshrc.example" >>~/.bashrc
+	echo "  Added brew-slush configuration to ~/.bashrc"
+else
+	echo "  Brew-slush configuration already present in ~/.bashrc"
+fi
 
 echo "==> Creating taps directory structure..."
 # Create taps directory structure
-mkdir -p /usr/local/Homebrew/Library/Taps/homebrew
+/bin/mkdir -p /usr/local/Homebrew/Library/Taps/homebrew
 
 echo "==> Cloning homebrew-core tap..."
 # Clone homebrew-core from your share
-git clone --depth=1 file:///Volumes/Monterey/repos/homebrew-core \
+/usr/bin/git clone --depth=1 "file://${BREW_SLUSH_HOME}/repos/homebrew-core" \
 	/usr/local/Homebrew/Library/Taps/homebrew/homebrew-core
 cd /usr/local/Homebrew/Library/Taps/homebrew/homebrew-core || exit
-git config advice.detachedHead false
+/usr/bin/git config advice.detachedHead false
 
 # Get the core commit hash and apply patches if available
-CORE_HASH=$(git rev-parse --short=11 HEAD)
-CORE_PATCH="/Volumes/Monterey/repos/core-diffs-for-${CORE_HASH}"
-if [ -f "$CORE_PATCH" ] && [ -s "$CORE_PATCH" ]; then
-	echo "==> Applying patches to homebrew-core from $(basename "$CORE_PATCH")..."
-	if git apply "$CORE_PATCH"; then
-		echo "==> Core patches applied successfully"
+CORE_HASH=$(/usr/bin/git rev-parse --short=11 HEAD)
+CORE_PATCH_DIR="${BREW_SLUSH_HOME}/repos/${CORE_HASH}_core_patches"
+if [[ -d "${CORE_PATCH_DIR}" ]]; then
+	CORE_PATCH_LIST="$(/usr/bin/find "${CORE_PATCH_DIR}" -type f -print | /usr/bin/sort)" || true
+	if [[ -n "${CORE_PATCH_LIST}" ]]; then
+		CORE_PATCH_APPLIED=false
+		echo "==> Applying patches to homebrew-core from ${CORE_PATCH_DIR}..."
+		while IFS= read -r patch; do
+			echo "==> Applying core patch $(/usr/bin/basename "${patch}")..."
+			if /usr/bin/git apply "${patch}"; then
+				echo "==> Applied $(/usr/bin/basename "${patch}")"
+				CORE_PATCH_APPLIED=true
+			else
+				echo "WARNING: Failed to apply core patch $(/usr/bin/basename "${patch}")"
+			fi
+		done <<< "${CORE_PATCH_LIST}"
+		if [[ "${CORE_PATCH_APPLIED}" == "true" ]] && ! /usr/bin/git diff --quiet; then
+			/usr/bin/git add -A .
+			/usr/bin/git commit -m "brew slush fixes at revision ${CORE_HASH}"
+		fi
 	else
-		echo "WARNING: Failed to apply core patches"
+		echo "==> No core patches to apply (directory empty: ${CORE_PATCH_DIR})"
 	fi
 else
-	echo "==> No core patches to apply (file empty or not found: $CORE_PATCH)"
+	echo "==> No core patches to apply (directory not found: ${CORE_PATCH_DIR})"
 fi
 
 cd || exit
@@ -81,23 +189,37 @@ echo "==> Verifying tap..."
 brew tap
 
 echo "==> Cloning homebrew-cask tap..."
-git clone file:///Volumes/Monterey/repos/homebrew-cask \
+/usr/bin/git clone "file://${BREW_SLUSH_HOME}/repos/homebrew-cask" \
 	/usr/local/Homebrew/Library/Taps/homebrew/homebrew-cask
 cd /usr/local/Homebrew/Library/Taps/homebrew/homebrew-cask || exit
-git config advice.detachedHead false
+/usr/bin/git config advice.detachedHead false
 
 # Get the cask commit hash and apply patches if available
-CASK_HASH=$(git rev-parse --short=11 HEAD)
-CASK_PATCH="/Volumes/Monterey/repos/cask-diffs-for-${CASK_HASH}"
-if [ -f "$CASK_PATCH" ] && [ -s "$CASK_PATCH" ]; then
-	echo "==> Applying patches to homebrew-cask from $(basename "$CASK_PATCH")..."
-	if git apply "$CASK_PATCH"; then
-		echo "==> Cask patches applied successfully"
+CASK_HASH=$(/usr/bin/git rev-parse --short=11 HEAD)
+CASK_PATCH_DIR="${BREW_SLUSH_HOME}/repos/${CASK_HASH}_cask_patches"
+if [[ -d "${CASK_PATCH_DIR}" ]]; then
+	CASK_PATCH_LIST="$(/usr/bin/find "${CASK_PATCH_DIR}" -type f -print | /usr/bin/sort)" || true
+	if [[ -n "${CASK_PATCH_LIST}" ]]; then
+		CASK_PATCH_APPLIED=false
+		echo "==> Applying patches to homebrew-cask from ${CASK_PATCH_DIR}..."
+		while IFS= read -r patch; do
+			echo "==> Applying cask patch $(/usr/bin/basename "${patch}")..."
+			if /usr/bin/git apply "${patch}"; then
+				echo "==> Applied $(/usr/bin/basename "${patch}")"
+				CASK_PATCH_APPLIED=true
+			else
+				echo "WARNING: Failed to apply cask patch $(/usr/bin/basename "${patch}")"
+			fi
+		done <<< "${CASK_PATCH_LIST}"
+		if [[ "${CASK_PATCH_APPLIED}" == "true" ]] && ! /usr/bin/git diff --quiet; then
+			/usr/bin/git add -A .
+			/usr/bin/git commit -m "brew slush fixes at revision ${CASK_HASH}"
+		fi
 	else
-		echo "WARNING: Failed to apply cask patches"
+		echo "==> No cask patches to apply (directory empty: ${CASK_PATCH_DIR})"
 	fi
 else
-	echo "==> No cask patches to apply (file empty or not found: $CASK_PATCH)"
+	echo "==> No cask patches to apply (directory not found: ${CASK_PATCH_DIR})"
 fi
 
 cd || exit
@@ -105,4 +227,33 @@ cd || exit
 echo "==> Running brew doctor..."
 brew doctor
 
+echo "==> Sourcing shell configuration for brew environment..."
+# shellcheck disable=SC1090
+source ~/.bashrc
+
+# Install packages from backup Brewfile if available
+# Find the most recent backup directory for this host
+HOST_FULL="${HOSTNAME:-$(/bin/hostname)}"
+HOST_SHORT="${HOST_FULL%%.*}"
+BACKUP_ROOT="${BREW_SLUSH_HOME}/backups/${HOST_SHORT}"
+
+BREWFILE=""
+if [[ -d "${BACKUP_ROOT}" ]]; then
+	# Find the most recent backup directory containing a Brewfile
+	LATEST_BACKUP="$(/bin/ls -1dt "${BACKUP_ROOT}"/[0-9T]*/ 2>/dev/null | /usr/bin/head -1)" || true
+	if [[ -n "${LATEST_BACKUP}" && -f "${LATEST_BACKUP}/Brewfile" ]]; then
+		BREWFILE="${LATEST_BACKUP}/Brewfile"
+	fi
+fi
+
+if [[ -n "${BREWFILE}" && -f "${BREWFILE}" ]]; then
+	echo "==> Installing packages from backup Brewfile: ${BREWFILE}..."
+	brew bundle --file="${BREWFILE}"
+else
+	echo "==> No backup Brewfile found, skipping package installation"
+	echo "    (Looked in ${BACKUP_ROOT})"
+fi
+
 echo "==> Installation complete!"
+echo "==> Please restart your terminal or run 'source ~/.zshrc' to apply changes to your environment."
+# Note: Shell restoration is handled by the restore_shell trap on EXIT

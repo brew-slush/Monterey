@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 # Create taps directory structure
 mkdir -p /usr/local/Homebrew/Library/Taps/homebrew

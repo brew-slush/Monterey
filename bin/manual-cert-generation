@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 # Run this script if postinstall of ca-certificates package fails
 # brew postinstall ca-certificates
@@ -12,4 +12,3 @@ sudo cp /usr/local/opt/ca-certificates/share/ca-certificates/cacert.pem \
 
 # Set permissions
 sudo chmod 644 /usr/local/etc/ca-certificates/cert.pem
-

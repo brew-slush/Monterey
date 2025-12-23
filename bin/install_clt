@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 # A simple dual-pane TUI that shows a stored status log (top) and a transient
 # stream (bottom). Press Ctrl-C to clear the screen and dump the captured log.
@@ -17,11 +17,11 @@ DMG_PATH="${1:-}"
 handle_interrupt() {
   trap - INT TERM
   add_status "Interrupted by user"
-  if [ -n "$install_pid" ] && kill -0 "$install_pid" 2>/dev/null; then
+  if [[ -n "${install_pid}" ]] && /bin/kill -0 "${install_pid}" 2>/dev/null; then
     add_status "Terminating installer process..."
-    sudo pkill -P "$install_pid" >/dev/null 2>&1 || true
-    sudo kill "$install_pid" >/dev/null 2>&1 || true
-    wait "$install_pid" >/dev/null 2>&1 || true
+    /usr/bin/sudo /usr/bin/pkill -P "${install_pid}" >/dev/null 2>&1 || true
+    /usr/bin/sudo /bin/kill "${install_pid}" >/dev/null 2>&1 || true
+    wait "${install_pid}" >/dev/null 2>&1 || true
     add_status "Installer terminated"
   fi
   install_status=130
@@ -31,55 +31,55 @@ handle_interrupt() {
 }
 
 is_installed() {
-  [ -x "/Library/Developer/CommandLineTools/usr/bin/clang" ]
+  [[ -x "/Library/Developer/CommandLineTools/usr/bin/clang" ]]
 }
 
 mount_dmg() {
-  local dmg_path="$1"
-  local intended_mount_point="$2"
-  local mount_log="$log_file"
+  local dmg_path="${1}"
+  local intended_mount_point="${2}"
+  local mount_log="${log_file}"
   local attach_path=""
 
-  if ! command -v hdiutil >/dev/null 2>&1; then
+  if [[ ! -x "/usr/bin/hdiutil" ]]; then
     add_status "ERROR: hdiutil not available"
     return 1
   fi
 
   set +e
   local existing
-  existing=$(hdiutil info 2>/dev/null | grep -B 5 "$dmg_path" | grep '^/Volumes/' | awk '{print $NF}' || true)
-  if [ -n "$existing" ]; then
-    printf "Existing mount detected: %s\n" "$existing" >>"$mount_log" 2>/dev/null || true
-    echo "$existing"
+  existing=$(/usr/bin/hdiutil info 2>/dev/null | /usr/bin/grep -B 5 "${dmg_path}" | /usr/bin/grep '^/Volumes/' | /usr/bin/awk '{print ${NF}}' || true)
+  if [[ -n "${existing}" ]]; then
+    printf "Existing mount detected: %s\n" "${existing}" >>"${mount_log}" 2>/dev/null || true
+    echo "${existing}"
     set -e
     return 0
   fi
 
-  if hdiutil mount -readonly -quiet -nobrowse -mountpoint "$intended_mount_point" "$dmg_path" >>"$mount_log" 2>&1; then
+  if /usr/bin/hdiutil mount -readonly -quiet -nobrowse -mountpoint "${intended_mount_point}" "${dmg_path}" >>"${mount_log}" 2>&1; then
     set -e
-    echo "$intended_mount_point"
+    echo "${intended_mount_point}"
     return 0
   fi
 
   local output
-  output=$(hdiutil attach -nobrowse "$dmg_path" 2>&1)
+  output=$(/usr/bin/hdiutil attach -nobrowse "${dmg_path}" 2>&1)
   local attach_status=$?
-  printf "%s\n" "$output" >>"$mount_log" 2>/dev/null || true
-  if [ "$attach_status" -ne 0 ]; then
+  printf "%s\n" "${output}" >>"${mount_log}" 2>/dev/null || true
+  if [[ "${attach_status}" -ne 0 ]]; then
     set -e
     return 1
   fi
   local actual
-  actual=$(echo "$output" | grep '/Volumes/' | awk '{print $NF}' | tail -n1)
+  actual=$(echo "${output}" | /usr/bin/grep '/Volumes/' | /usr/bin/awk '{print ${NF}}' | /usr/bin/tail -n1)
   # Fallback: query current mounts if parsing failed
-  if [ -z "$actual" ]; then
-    actual=$(hdiutil info 2>/dev/null | grep '^/Volumes/' | awk '{print $1}' | tail -n1)
+  if [[ -z "${actual}" ]]; then
+    actual=$(/usr/bin/hdiutil info 2>/dev/null | /usr/bin/grep '^/Volumes/' | /usr/bin/awk '{print ${1}}' | /usr/bin/tail -n1)
   fi
   set -e
-  if [ -n "$actual" ]; then
+  if [[ -n "${actual}" ]]; then
     # sanitize CR/LF
-    attach_path=$(printf "%s" "$actual" | tr -d '\r\n')
-    echo "$attach_path"
+    attach_path=$(printf "%s" "${actual}" | /usr/bin/tr -d '\r\n')
+    echo "${attach_path}"
     return 0
   fi
   return 1
@@ -87,37 +87,37 @@ mount_dmg() {
 
 restore_screen() {
   local lines
-  lines=$(tput lines)
-  tput csr 0 $((lines - 1))  # restore full scroll region
-  tput cnorm                 # show cursor
+  lines=$(/usr/bin/tput lines)
+  /usr/bin/tput csr 0 $((lines - 1))  # restore full scroll region
+  /usr/bin/tput cnorm                 # show cursor
 }
 
 finalize() {
-  if [ "$finalized" -eq 1 ]; then return; fi
+  if [[ "${finalized}" -eq 1 ]]; then return; fi
   finalized=1
   set +e  # do not abort cleanup on non-zero tput commands
 
-  if [ -n "$install_pid" ] && kill -0 "$install_pid" 2>/dev/null; then
-    kill "$install_pid" 2>/dev/null || true
-    wait "$install_pid" 2>/dev/null || true
+  if [[ -n "${install_pid}" ]] && /bin/kill -0 "${install_pid}" 2>/dev/null; then
+    /bin/kill "${install_pid}" 2>/dev/null || true
+    wait "${install_pid}" 2>/dev/null || true
   fi
 
-  if [ "${MOUNTED_IN_SCRIPT:-false}" = true ] && [ -n "$MOUNT_PATH" ]; then
-    hdiutil detach "$MOUNT_PATH" 2>/dev/null || true
+  if [[ "${MOUNTED_IN_SCRIPT:-false}" = true ]] && [[ -n "${MOUNT_PATH}" ]]; then
+    /usr/bin/hdiutil detach "${MOUNT_PATH}" 2>/dev/null || true
   fi
 
   restore_screen
-  tput cup 0 0
+  /usr/bin/tput cup 0 0
   for ((i = 0; i < lines; i++)); do
-    tput dl1 || true  # delete current row (shifts everything up); ignore failures
+    /usr/bin/tput dl1 || true  # delete current row (shifts everything up); ignore failures
   done
-  tput cup 0 0
-  tput ed    # ensure the cleared area is blank
+  /usr/bin/tput cup 0 0
+  /usr/bin/tput ed    # ensure the cleared area is blank
   printf '\033[?1049l'  # explicit exit alternate screen to main buffer
-  tput rmcup || true    # return to main screen buffer (restores original prompt/command)
-  tput clear
-  tput cup 0 0
-  if [ "${#log_lines[@]}" -gt 0 ]; then
+  /usr/bin/tput rmcup || true    # return to main screen buffer (restores original prompt/command)
+  /usr/bin/tput clear
+  /usr/bin/tput cup 0 0
+  if [[ "${#log_lines[@]}" -gt 0 ]]; then
     printf "%s\n" "${log_lines[@]}"
   fi
 }
@@ -125,10 +125,10 @@ finalize() {
 trap handle_interrupt INT TERM
 trap finalize EXIT
 
-lines=$(tput lines)
-cols=$(tput cols)
+lines=$(/usr/bin/tput lines)
+cols=$(/usr/bin/tput cols)
 
-if [ "$lines" -lt 6 ]; then
+if [[ "${lines}" -lt 6 ]]; then
   echo "Please use a taller terminal (at least 6 rows)." >&2
   exit 1
 fi
@@ -136,7 +136,7 @@ fi
 top_frame_height=$((lines / 2))
 bottom_frame_height=$((lines - top_frame_height))
 
-if [ "$top_frame_height" -lt 3 ] || [ "$bottom_frame_height" -lt 3 ]; then
+if [[ "${top_frame_height}" -lt 3 ]] || [[ "${bottom_frame_height}" -lt 3 ]]; then
   echo "Please use a taller terminal to fit framed panes." >&2
   exit 1
 fi
@@ -154,112 +154,112 @@ bottom_bottom_border=$((bottom_border_row + bottom_frame_height - 1))
 bottom_content_height=$((bottom_frame_height - 2))
 
 make_border() {
-  local title="$1"
+  local title="${1}"
   local title_block="-- ${title} --"
   local inner_width=$((cols - 2))
-  if [ "${#title_block}" -gt "$inner_width" ]; then
-    title_block="${title_block:0:$inner_width}"
+  if [[ "${#title_block}" -gt "${inner_width}" ]]; then
+    title_block="${title_block:0:${inner_width}}"
   fi
   local fill_len=$((inner_width - ${#title_block}))
-  printf "+%s%*s+" "$title_block" "$fill_len" "" | sed "s/ /-/g"
+  printf "+%s%*s+" "${title_block}" "${fill_len}" "" | /usr/bin/sed "s/ /-/g"
 }
 
 draw_frame() {
-  local start_row=$1
-  local height=$2
-  local title=$3
+  local start_row="${1}"
+  local height="${2}"
+  local title="${3}"
 
-  tput cup "$start_row" 0
-  make_border "$title"
+  /usr/bin/tput cup "${start_row}" 0
+  make_border "${title}"
 
   local end_row=$((start_row + height - 1))
   local content_start=$((start_row + 1))
   local content_end=$((end_row - 1))
 
   for ((r = content_start; r < end_row; r++)); do
-    tput cup "$r" 0
+    /usr/bin/tput cup "${r}" 0
     printf "|%*s|" $((cols - 2)) ""
   done
 
-  tput cup "$end_row" 0
-  printf "+%*s+" $((cols - 2)) "" | tr ' ' '-'
+  /usr/bin/tput cup "${end_row}" 0
+  printf "+%*s+" $((cols - 2)) "" | /usr/bin/tr ' ' '-'
 }
 
-tput smcup || true  # use alternate screen to avoid polluting main buffer
-tput clear
-tput civis
+/usr/bin/tput smcup || true  # use alternate screen to avoid polluting main buffer
+/usr/bin/tput clear
+/usr/bin/tput civis
 
-draw_frame "$top_border_row" "$top_frame_height" "Install Status"
-draw_frame "$bottom_border_row" "$bottom_frame_height" "Installer Log"
+draw_frame "${top_border_row}" "${top_frame_height}" "Install Status"
+draw_frame "${bottom_border_row}" "${bottom_frame_height}" "Installer Log"
 
 render_pane() {
-  local start_row=$1
-  local height=$2
-  local src_name=$3
+  local start_row="${1}"
+  local height="${2}"
+  local src_name="${3}"
   local inner_width=$((cols - 2))
 
   local len
   eval "len=\${#${src_name}[@]}"
   local offset=0
-  if [ "$len" -gt "$height" ]; then
+  if [[ "${len}" -gt "${height}" ]]; then
     offset=$((len - height))
   fi
 
   for ((i = 0; i < height; i++)); do
     local idx=$((offset + i))
     local line=""
-    if [ "$idx" -lt "$len" ]; then
-      eval "line=\${${src_name}[$idx]}"
-      line=${line:0:inner_width}
+    if [[ "${idx}" -lt "${len}" ]]; then
+      eval "line=\${${src_name}[${idx}]}"
+      line="${line:0:inner_width}"
     fi
-    printf -v padded "%-*s" "$inner_width" "$line"
-    tput cup $((start_row + i)) 1
-    printf "%s" "$padded"
+    printf -v padded "%-*s" "${inner_width}" "${line}"
+    /usr/bin/tput cup $((start_row + i)) 1
+    printf "%s" "${padded}"
   done
 }
 
 top_display=()
 bottom_display=()
-render_pane "$top_content_start" "$top_content_height" top_display
-render_pane "$bottom_content_start" "$bottom_content_height" bottom_display
+render_pane "${top_content_start}" "${top_content_height}" top_display
+render_pane "${bottom_content_start}" "${bottom_content_height}" bottom_display
 
 add_status() {
-  local msg="• $1"
-  log_lines+=("$msg")
-  top_display+=("$msg")
-  if [ "${#top_display[@]}" -gt "$top_content_height" ]; then
-    top_display=("${top_display[@]: -$top_content_height}")
+  local msg="• ${1}"
+  log_lines+=("${msg}")
+  top_display+=("${msg}")
+  if [[ "${#top_display[@]}" -gt "${top_content_height}" ]]; then
+    top_display=("${top_display[@]: -${top_content_height}}")
   fi
-  render_pane "$top_content_start" "$top_content_height" top_display
+  render_pane "${top_content_start}" "${top_content_height}" top_display
 }
 
 refresh_bottom_from_log() {
   bottom_display=()
-  if [ -n "$log_file" ] && [ -f "$log_file" ]; then
+  if [[ -n "${log_file}" ]] && [[ -f "${log_file}" ]]; then
     # Read the last N lines from the log file
     while IFS= read -r line; do
-      bottom_display+=("$line")
-    done < <(tail -n "$bottom_content_height" "$log_file" 2>/dev/null || true)
+      bottom_display+=("${line}")
+    done < <(/usr/bin/tail -n "${bottom_content_height}" "${log_file}" 2>/dev/null || true)
   else
     bottom_display=("No log file set or readable" "Path: ${log_file:-<none>}")
   fi
   # Trim/pad display to fit
-  if [ "${#bottom_display[@]}" -gt "$bottom_content_height" ]; then
-    bottom_display=("${bottom_display[@]: -$bottom_content_height}")
+  if [[ "${#bottom_display[@]}" -gt "${bottom_content_height}" ]]; then
+    bottom_display=("${bottom_display[@]: -${bottom_content_height}}")
   fi
-  render_pane "$bottom_content_start" "$bottom_content_height" bottom_display
+  render_pane "${bottom_content_start}" "${bottom_content_height}" bottom_display
 }
 
 run_installation() {
   set +e
-  local dmg="$DMG_PATH"
-  log_file="/tmp/clt_install_$(date +%Y%m%d_%H%M%S).log"
-  : > "$log_file" 2>/dev/null || true
+  local dmg="${DMG_PATH}"
+  log_file="/tmp/clt_install_$(/bin/date +%Y%m%d_%H%M%S).log"
+  : > "${log_file}" 2>/dev/null || true
 
   local arch proc
-  arch=$(uname -m)
-  proc=$([[ "$arch" == "arm64" ]] && echo "ARM" || echo "Intel")
-  add_status "Architecture: $arch ($proc)"
+  arch=$(/usr/bin/uname -m)
+  proc=$([[ "${arch}" == "arm64" ]] && echo "ARM" || echo "Intel")
+  add_status "Architecture: ${arch} (${proc})"
 
   if is_installed; then
     add_status "Command Line Tools already installed"
@@ -268,143 +268,143 @@ run_installation() {
     return
   fi
 
-  if [ -z "$dmg" ]; then
+  if [[ -z "${dmg}" ]]; then
     local script_parent search_dir
-    script_parent="$(cd "$(dirname "$0")/.." && pwd)"
+    script_parent="$(cd "$(/usr/bin/dirname "${0}")/.." && /bin/pwd)"
     search_dir="${script_parent}/software/${proc}"
-    if [ ! -d "$search_dir" ]; then
-      add_status "ERROR: search dir missing: $search_dir"
+    if [[ ! -d "${search_dir}" ]]; then
+      add_status "ERROR: search dir missing: ${search_dir}"
       install_done=1
       install_status=1
       return
     fi
-    dmg=$(find "$search_dir" -name "Command_Line_Tools_*.dmg" -type f -print -quit 2>/dev/null)
-    if [ -z "$dmg" ]; then
-      add_status "ERROR: no DMG found in $search_dir"
+    dmg=$(/usr/bin/find "${search_dir}" -name "Command_Line_Tools_*.dmg" -type f -print -quit 2>/dev/null)
+    if [[ -z "${dmg}" ]]; then
+      add_status "ERROR: no DMG found in ${search_dir}"
       install_done=1
       install_status=1
       return
     fi
   fi
 
-  if [ ! -f "$dmg" ]; then
-    add_status "ERROR: DMG not found: $dmg"
+  if [[ ! -f "${dmg}" ]]; then
+    add_status "ERROR: DMG not found: ${dmg}"
     install_done=1
     install_status=1
     return
   fi
 
-  add_status "DMG: $dmg"
-  add_status "Installer log: $log_file"
+  add_status "DMG: ${dmg}"
+  add_status "Installer log: ${log_file}"
 
   MOUNT_PATH=""
   local mount_result
-  if ! mount_result=$(mount_dmg "$dmg" "/Volumes/CLT_$$"); then
+  if ! mount_result=$(mount_dmg "${dmg}" "/Volumes/CLT_$$"); then
     add_status "ERROR: failed to mount DMG"
     install_done=1
     install_status=1
     return
   fi
-  mount_result=$(printf "%s" "$mount_result" | tr -d '\r\n')
-  if [ -z "$mount_result" ]; then
-    mount_result=$(hdiutil info 2>/dev/null | grep '^/Volumes/' | awk '{print $1}' | tail -n1)
+  mount_result=$(printf "%s" "${mount_result}" | /usr/bin/tr -d '\r\n')
+  if [[ -z "${mount_result}" ]]; then
+    mount_result=$(/usr/bin/hdiutil info 2>/dev/null | /usr/bin/grep '^/Volumes/' | /usr/bin/awk '{print ${1}}' | /usr/bin/tail -n1)
   fi
-  if [ -n "$mount_result" ]; then
-    if [[ "$mount_result" == /Volumes/* && "$mount_result" != "$MOUNT_PATH" ]]; then
+  if [[ -n "${mount_result}" ]]; then
+    if [[ "${mount_result}" == /Volumes/* && "${mount_result}" != "${MOUNT_PATH}" ]]; then
       add_status "Using existing mount"
       MOUNTED_IN_SCRIPT=false
     else
       MOUNTED_IN_SCRIPT=true
     fi
-    MOUNT_PATH="$mount_result"
+    MOUNT_PATH="${mount_result}"
   fi
-  MOUNT_PATH=$(printf "%s" "$MOUNT_PATH" | tr -d '\r\n')
-  if [ -z "$MOUNT_PATH" ]; then
+  MOUNT_PATH=$(printf "%s" "${MOUNT_PATH}" | /usr/bin/tr -d '\r\n')
+  if [[ -z "${MOUNT_PATH}" ]]; then
     add_status "ERROR: mount path empty"
     install_done=1
     install_status=1
     return
   fi
-  add_status "Mount path: $MOUNT_PATH"
-  if [ ! -d "$MOUNT_PATH" ]; then
+  add_status "Mount path: ${MOUNT_PATH}"
+  if [[ ! -d "${MOUNT_PATH}" ]]; then
     add_status "ERROR: mount path not present"
     install_done=1
     install_status=1
     return
   fi
-  sleep 1
+  /bin/sleep 1
 
   local pkg
   for attempt in 1 2 3 4 5; do
-    add_status "Searching for pkg (attempt $attempt)..."
+    add_status "Searching for pkg (attempt ${attempt})..."
     local candidates
-    candidates=$(find "$MOUNT_PATH" -maxdepth 3 -name "*.pkg" -type f 2>/dev/null | head -n 5)
-    if [ -n "$candidates" ]; then
+    candidates=$(/usr/bin/find "${MOUNT_PATH}" -maxdepth 3 -name "*.pkg" -type f 2>/dev/null | /usr/bin/head -n 5)
+    if [[ -n "${candidates}" ]]; then
       add_status "Found pkg candidates:"
       while IFS= read -r item; do
-        [ -n "$item" ] && add_status "  - $item"
-        [ -z "$pkg" ] && pkg="$item"
-      done <<<"$candidates"
+        [[ -n "${item}" ]] && add_status "  - ${item}"
+        [[ -z "${pkg}" ]] && pkg="${item}"
+      done <<<"${candidates}"
     else
-      add_status "No pkg yet in $MOUNT_PATH"
+      add_status "No pkg yet in ${MOUNT_PATH}"
     fi
-    [ -n "$pkg" ] && break
+    [[ -n "${pkg}" ]] && break
     # Peek at contents once on first miss
-    if [ "$attempt" -eq 1 ]; then
+    if [[ "${attempt}" -eq 1 ]]; then
       local contents
-      contents=$(find "$MOUNT_PATH" -maxdepth 3 -type f -print 2>/dev/null | head -n 5)
-      if [ -n "$contents" ]; then
+      contents=$(/usr/bin/find "${MOUNT_PATH}" -maxdepth 3 -type f -print 2>/dev/null | /usr/bin/head -n 5)
+      if [[ -n "${contents}" ]]; then
         add_status "Contents sample:"
         while IFS= read -r item; do
-          [ -n "$item" ] && add_status "  - $item"
-        done <<<"$contents"
+          [[ -n "${item}" ]] && add_status "  - ${item}"
+        done <<<"${contents}"
       fi
     fi
-    sleep 1
+    /bin/sleep 1
   done
-  if [ -z "$pkg" ]; then
-    add_status "ERROR: no pkg in $MOUNT_PATH"
+  if [[ -z "${pkg}" ]]; then
+    add_status "ERROR: no pkg in ${MOUNT_PATH}"
     local contents
-    contents=$(ls -la "$MOUNT_PATH" 2>/dev/null | head -n 8)
-    if [ -n "$contents" ]; then
+    contents=$(/bin/ls -la "${MOUNT_PATH}" 2>/dev/null | /usr/bin/head -n 8)
+    if [[ -n "${contents}" ]]; then
       add_status "Contents preview:"
       while IFS= read -r item; do
-        [ -n "$item" ] && add_status "  ${item}"
-      done <<<"$contents"
+        [[ -n "${item}" ]] && add_status "  ${item}"
+      done <<<"${contents}"
     fi
-    if [ -f "$log_file" ]; then
+    if [[ -f "${log_file}" ]]; then
       add_status "Mount log excerpt:"
       while IFS= read -r line; do
-        [ -n "$line" ] && add_status "  ${line}"
-      done < <(tail -n 5 "$log_file" 2>/dev/null)
+        [[ -n "${line}" ]] && add_status "  ${line}"
+      done < <(/usr/bin/tail -n 5 "${log_file}" 2>/dev/null)
     fi
     install_done=1
     install_status=1
     return
   fi
 
-  add_status "Installing $(basename "$pkg")"
-  sudo installer -pkg "$pkg" -target / -verboseR > "$log_file" 2>&1 &
+  add_status "Installing $(/usr/bin/basename ""${pkg}"")"
+  /usr/bin/sudo /usr/sbin/installer -pkg "${pkg}" -target / -verboseR > "${log_file}" 2>&1 &
   install_pid=$!
 
-  while kill -0 "$install_pid" 2>/dev/null; do
+  while /bin/kill -0 "${install_pid}" 2>/dev/null; do
     refresh_bottom_from_log
-    sleep 1
+    /bin/sleep 1
   done
 
-  wait "$install_pid"
+  wait "${install_pid}"
   install_status=$?
   refresh_bottom_from_log
 
-  if [ "$install_status" -eq 0 ] && is_installed; then
+  if [[ "${install_status}" -eq 0 ]] && is_installed; then
     add_status "Install completed successfully"
   else
-    add_status "Install failed (exit $install_status)"
+    add_status "Install failed (exit ${install_status})"
   fi
 
-  if [ "$MOUNTED_IN_SCRIPT" = true ] && [ -n "$MOUNT_PATH" ]; then
-    add_status "Detaching $MOUNT_PATH"
-    hdiutil detach "$MOUNT_PATH" 2>/dev/null || true
+  if [[ "${MOUNTED_IN_SCRIPT}" = true ]] && [[ -n "${MOUNT_PATH}" ]]; then
+    add_status "Detaching ${MOUNT_PATH}"
+    /usr/bin/hdiutil detach "${MOUNT_PATH}" 2>/dev/null || true
   fi
 
   install_done=1
@@ -413,4 +413,4 @@ run_installation() {
 
 run_installation
 finalize
-exit "$install_status"
+exit "${install_status}"

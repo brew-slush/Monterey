@@ -9,4 +9,3 @@ sudo touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
 
 # Verify system is ready (should show existing CLT)
 brew doctor
-
