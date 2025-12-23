@@ -226,6 +226,8 @@ cd || exit
 
 echo "==> Running brew doctor..."
 brew doctor
+unset HOMEBREW_CACHE
+brew cleanup
 
 echo "==> Sourcing shell configuration for brew environment..."
 # shellcheck disable=SC1090
@@ -247,8 +249,54 @@ if [[ -d "${BACKUP_ROOT}" ]]; then
 fi
 
 if [[ -n "${BREWFILE}" && -f "${BREWFILE}" ]]; then
-	echo "==> Installing packages from backup Brewfile: ${BREWFILE}..."
-	brew bundle --file="${BREWFILE}"
+	PROCESSED_BREWFILE="${BREWFILE}.processed"
+	if [[ -f "${PROCESSED_BREWFILE}" ]]; then
+		echo "==> Reusing existing processed Brewfile: ${PROCESSED_BREWFILE}"
+	else
+		echo "==> Scrubbing pinned formulae from ${BREWFILE} -> ${PROCESSED_BREWFILE}..."
+		/usr/bin/python3 - "${BREWFILE}" "${PROCESSED_BREWFILE}" <<'PYCODE'
+import ast
+import json
+import pathlib
+import re
+import sys
+
+src = pathlib.Path(sys.argv[1])
+dst = pathlib.Path(sys.argv[2])
+text = src.read_text()
+lines = text.splitlines()
+had_trailing_newline = text.endswith("\n")
+
+args_pattern = re.compile(r'args:\s*\[(.*?)]')
+remove_pattern = re.compile(r',\s*args:\s*\[.*?]')
+
+def scrub_line(line: str) -> str:
+    if "args:" not in line:
+        return line
+    match = args_pattern.search(line)
+    if not match:
+        return line
+    try:
+        args = ast.literal_eval("[" + match.group(1) + "]")
+    except Exception:
+        return line
+    args = list(args)
+    new_args = [arg for arg in args if arg != "pin"]
+    if len(new_args) == len(args):
+        return line
+    if not new_args:
+        return remove_pattern.sub("", line, count=1)
+    formatted = ", ".join(json.dumps(arg) for arg in new_args)
+    return line[: match.start()] + f"args: [{formatted}]" + line[match.end():]
+
+processed_lines = [scrub_line(line) for line in lines]
+if had_trailing_newline:
+    processed_lines.append("")
+dst.write_text("\n".join(processed_lines))
+PYCODE
+	fi
+	echo "==> Installing packages from processed Brewfile: ${PROCESSED_BREWFILE}..."
+	brew bundle --file="${PROCESSED_BREWFILE}"
 else
 	echo "==> No backup Brewfile found, skipping package installation"
 	echo "    (Looked in ${BACKUP_ROOT})"
