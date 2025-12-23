@@ -8,3 +8,6 @@ software
 .DS_Store
 .fseventsd
 backups
+.Spotlight-V100
+.DocumentRevisions-V100
+.TemporaryItems
