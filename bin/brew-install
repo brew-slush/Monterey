@@ -102,7 +102,7 @@ echo "==> Creating Homebrew directory structure..."
 
 echo "==> Cloning Homebrew repository..."
 # Clone from your local repository
-BREW_SLUSH_HOME="${BREW_SLUSH_HOME:-/Volumes/BrewSlush/Monterey}"
+BREW_SLUSH_HOME="${BREW_SLUSH_HOME:-/Volumes/Monterey}"
 /usr/bin/git clone --depth=1 "file://${BREW_SLUSH_HOME}/repos/homebrew" /usr/local/Homebrew
 cd /usr/local/Homebrew || exit
 /usr/bin/git config advice.detachedHead false
@@ -252,37 +252,57 @@ echo "==> Sourcing shell configuration for brew environment..."
 # shellcheck disable=SC1090
 source ~/.bashrc
 
-# Install packages from backup Brewfile if available
-# Find the most recent backup directory for this host
+# Install packages from Brewfile
+# Prefer explicit --brewfile, then hostwide override under backups/<host>/Brewfile,
+# then fall back to the most recent per-backup Brewfile.
 HOST_FULL="${HOSTNAME:-$(/bin/hostname)}"
 HOST_SHORT="${HOST_FULL%%.*}"
 BACKUP_ROOT="${BREW_SLUSH_HOME}/backups/${HOST_SHORT}"
 
-BREWFILE=""
-if [[ -d "${BACKUP_ROOT}" ]]; then
-	# Find the most recent backup directory containing a Brewfile
-	LATEST_BACKUP="$(/bin/ls -1dt "${BACKUP_ROOT}"/[0-9T]*/ 2>/dev/null | /usr/bin/head -1)" || true
-	if [[ -n "${LATEST_BACKUP}" && -f "${LATEST_BACKUP}/Brewfile" ]]; then
-		BREWFILE="${LATEST_BACKUP}/Brewfile"
-	fi
-fi
+BREWFILE_SRC=""
+PROCESSED_BREWFILE=""
 
-if [[ -z "${BREWFILE}" && -n "${USER_BREWFILE}" ]]; then
+# 1) Explicit --brewfile wins
+if [[ -n "${USER_BREWFILE}" ]]; then
 	if [[ -f "${USER_BREWFILE}" ]]; then
-		BREWFILE="${USER_BREWFILE}"
-		echo "==> Using Brewfile provided via --brewfile: ${BREWFILE}"
+		BREWFILE_SRC="${USER_BREWFILE}"
+		echo "==> Using Brewfile provided via --brewfile: ${BREWFILE_SRC}"
 	else
 		echo "WARNING: Brewfile provided via --brewfile not found: ${USER_BREWFILE}"
 	fi
 fi
 
-if [[ -n "${BREWFILE}" && -f "${BREWFILE}" ]]; then
-	PROCESSED_BREWFILE="${BREWFILE}.processed"
-	if [[ -f "${PROCESSED_BREWFILE}" ]]; then
-		echo "==> Reusing existing processed Brewfile: ${PROCESSED_BREWFILE}"
-	else
-		echo "==> Scrubbing pinned formulae from ${BREWFILE} -> ${PROCESSED_BREWFILE}..."
-		/usr/bin/python3 - "${BREWFILE}" "${PROCESSED_BREWFILE}" <<'PYCODE'
+# 2) Hostwide override (backs up to backups/<host>/Brewfile[.processed])
+if [[ -z "${BREWFILE_SRC}" && -d "${BACKUP_ROOT}" ]]; then
+	HOST_BREWFILE="${BACKUP_ROOT}/Brewfile"
+	HOST_PROCESSED="${BACKUP_ROOT}/Brewfile.processed"
+	if [[ -f "${HOST_PROCESSED}" ]]; then
+		PROCESSED_BREWFILE="${HOST_PROCESSED}"
+		BREWFILE_SRC="${HOST_BREWFILE}"
+		echo "==> Using host override Brewfile (preprocessed): ${PROCESSED_BREWFILE}"
+	elif [[ -f "${HOST_BREWFILE}" ]]; then
+		BREWFILE_SRC="${HOST_BREWFILE}"
+		PROCESSED_BREWFILE="${HOST_PROCESSED}"
+		echo "==> Using host override Brewfile: ${BREWFILE_SRC}"
+	fi
+fi
+
+# 3) Most recent backup Brewfile
+if [[ -z "${BREWFILE_SRC}" && -d "${BACKUP_ROOT}" ]]; then
+	LATEST_BACKUP="$(/bin/ls -1dt "${BACKUP_ROOT}"/[0-9T]*/ 2>/dev/null | /usr/bin/head -1)" || true
+	if [[ -n "${LATEST_BACKUP}" && -f "${LATEST_BACKUP}/Brewfile" ]]; then
+		BREWFILE_SRC="${LATEST_BACKUP}/Brewfile"
+		PROCESSED_BREWFILE="${BREWFILE_SRC}.processed"
+		echo "==> Using Brewfile from latest backup: ${BREWFILE_SRC}"
+	fi
+fi
+
+if [[ -n "${PROCESSED_BREWFILE}" && -f "${PROCESSED_BREWFILE}" ]]; then
+	echo "==> Reusing existing processed Brewfile: ${PROCESSED_BREWFILE}"
+elif [[ -n "${BREWFILE_SRC}" && -f "${BREWFILE_SRC}" ]]; then
+	PROCESSED_BREWFILE="${PROCESSED_BREWFILE:-${BREWFILE_SRC}.processed}"
+	echo "==> Scrubbing pinned formulae from ${BREWFILE_SRC} -> ${PROCESSED_BREWFILE}..."
+	/usr/bin/python3 - "${BREWFILE_SRC}" "${PROCESSED_BREWFILE}" <<'PYCODE'
 import ast
 import json
 import pathlib
@@ -322,12 +342,14 @@ if had_trailing_newline:
     processed_lines.append("")
 dst.write_text("\n".join(processed_lines))
 PYCODE
-	fi
+fi
+
+if [[ -n "${PROCESSED_BREWFILE}" && -f "${PROCESSED_BREWFILE}" ]]; then
 	echo "==> Installing packages from processed Brewfile: ${PROCESSED_BREWFILE}..."
 	brew bundle --file="${PROCESSED_BREWFILE}"
 else
-	echo "==> No backup Brewfile found, skipping package installation"
-	echo "    (Looked in ${BACKUP_ROOT})"
+	echo "==> No Brewfile found, skipping package installation"
+	echo "    (Looked in ${BACKUP_ROOT} and --brewfile override)"
 fi
 
 echo "==> Installation complete!"

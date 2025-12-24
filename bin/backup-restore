@@ -33,12 +33,19 @@
 
 set -euo pipefail
 
+# Keep Homebrew quiet and stable during backup/restore regardless of user shell config.
+# Also reused inline on brew invocations in case the environment is mutated later.
+export HOMEBREW_NO_AUTO_UPDATE=1
+export HOMEBREW_NO_ANALYTICS=1
+export HOMEBREW_NO_INSTALL_CLEANUP=1
+export HOMEBREW_SKIP_CACHE=1
+
 MODE="verify"
 APPLY="no"
 CLEAN="no"
 SOURCE_DIR=""
 START_EPOCH="$(/bin/date +%s)"
-BREW_SLUSH_HOME="${BREW_SLUSH_HOME:-/Volumes/BrewSlush/Monterey}"
+BREW_SLUSH_HOME="${BREW_SLUSH_HOME:-/Volumes/Monterey}"
 HOST_FULL="${HOSTNAME:-$(/bin/hostname)}"
 HOST_SHORT="${HOST_FULL%%.*}"
 
@@ -300,8 +307,10 @@ if [[ "${MODE}" != "restore" && "${MODE}" != "clean" ]]; then
     echo "  Enumerating installed formulae/casks (brew list)"
     BREW_LIST_TMP="$(/usr/bin/mktemp)"
     {
-      "${BREW_BIN}" list --verbose --formula 2>/dev/null || true
-      "${BREW_BIN}" list --verbose --cask 2>/dev/null || true
+      HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_INSTALL_CLEANUP=1 \
+        "${BREW_BIN}" list --verbose --formula 2>/dev/null || true
+      HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_INSTALL_CLEANUP=1 \
+        "${BREW_BIN}" list --verbose --cask 2>/dev/null || true
     } > "${BREW_LIST_TMP}"
     /usr/bin/grep '^/' "${BREW_LIST_TMP}" >> "${MANIFEST_TMP}" || true
     /bin/rm -f "${BREW_LIST_TMP}"
@@ -309,13 +318,15 @@ if [[ "${MODE}" != "restore" && "${MODE}" != "clean" ]]; then
     echo "  Capturing /Applications cask artifacts"
     while IFS= read -r cask; do
       [[ -n "${cask}" ]] || continue
-      cask_info="$("${BREW_BIN}" info --cask "${cask}" 2>/dev/null || true)"
-      artifact="$(echo "${cask_info}" | /usr/bin/awk 'BEGIN{in=0} /^==> Artifacts/{in=1; next} /^==>/{in=0} in && NF{print $1; exit}')"
+      cask_info="$(HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_INSTALL_CLEANUP=1 \
+        "${BREW_BIN}" info --cask "${cask}" 2>/dev/null || true)"
+      artifact="$(echo "${cask_info}" | /usr/bin/awk 'BEGIN{in_section=0} /^==> Artifacts/{in_section=1; next} /^==>/{in_section=0} in_section && NF{print $1; exit}')"
       if [[ -n "${artifact}" ]]; then
         app_path="/Applications/${artifact}"
         [[ -e "${app_path}" ]] && /usr/bin/sudo /usr/bin/find "${app_path}" -xdev -print >> "${MANIFEST_TMP}"
       fi
-    done < <("${BREW_BIN}" list --cask 2>/dev/null || true)
+    done < <(HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_INSTALL_CLEANUP=1 \
+      "${BREW_BIN}" list --cask 2>/dev/null || true)
 
     # Capture Homebrew-managed symlinks under the prefix that point into Cellar/opt
     SYMLINK_DIRS=(
@@ -447,7 +458,8 @@ if [[ "${MODE}" == "backup" ]]; then
 
   if [[ -n "${BREW_BIN}" ]]; then
     echo "  Capturing Brewfile"
-    if ! "${BREW_BIN}" bundle dump --describe --force --file "${BUNDLE}"; then
+    if ! HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_INSTALL_CLEANUP=1 \
+      "${BREW_BIN}" bundle dump --describe --force --file "${BUNDLE}"; then
       echo "  WARN: brew bundle dump failed; Brewfile not captured" >&2
       BUNDLE=""
     fi
@@ -512,6 +524,8 @@ if [[ "${CLEAN}" == "yes" ]]; then
     echo "[+] CLEAN MODE (post-backup)"
   fi
   echo "[+] Ensuring permissions for Homebrew paths"
+  /usr/bin/sudo /usr/sbin/chown -R "$(/usr/bin/whoami)":admin /usr/local 2>/dev/null || true
+  /usr/bin/sudo /bin/chmod -R u+rwX /usr/local 2>/dev/null || true
   /usr/bin/sudo /usr/sbin/chown -R "$(/usr/bin/whoami)":admin \
     /usr/local/Caskroom \
     /usr/local/Cellar \
@@ -519,12 +533,37 @@ if [[ "${CLEAN}" == "yes" ]]; then
     /usr/local/opt \
     /usr/local/var/homebrew \
     2>/dev/null || true
+  /usr/bin/sudo /bin/chmod -R u+rwX \
+    /usr/local/Caskroom \
+    /usr/local/Cellar \
+    /usr/local/Homebrew \
+    /usr/local/opt \
+    /usr/local/var/homebrew \
+    2>/dev/null || true
+  CACHE_STASHED=()
+  for cache_path in "${HOME}/Library/Caches/Homebrew" "/Library/Caches/Homebrew"; do
+    if [[ -d "${cache_path}" ]]; then
+      stash="${cache_path}.backup-restore-stash"
+      echo "  Stashing cache to ${stash}"
+      if /usr/bin/sudo /bin/mv "${cache_path}" "${stash}" 2>/dev/null; then
+        CACHE_STASHED+=("${cache_path}:::${stash}")
+      elif /bin/mv "${cache_path}" "${stash}" 2>/dev/null; then
+        CACHE_STASHED+=("${cache_path}:::${stash}")
+      fi
+    fi
+  done
   TEMP_CACHE="$(/usr/bin/mktemp -d)"
   echo "  Using temp cache for uninstall: ${TEMP_CACHE}"
   echo "  Invoking Homebrew official uninstall"
-
-  HOMEBREW_CACHE="${TEMP_CACHE}" /bin/bash -c "$(/usr/bin/curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)"
-  /bin/rm -rf "${TEMP_CACHE}"
+  UNINSTALL_RC=0
+  if [[ -n "${BREW_BIN}" && -x "${BREW_BIN}" ]]; then
+    HOMEBREW_CACHE="${TEMP_CACHE}" HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_SKIP_CACHE=1 HOMEBREW_CLEANUP_SKIP_CACHE=1 \
+      /bin/bash -c "$(/usr/bin/curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)" || UNINSTALL_RC=$?
+  else
+    echo "  NOTE: brew binary not found; skipping official uninstall"
+    UNINSTALL_RC=127
+  fi
+  /bin/rm -rf "${TEMP_CACHE}" 2>/dev/null || true
 
   echo "[+] Removing known Homebrew-only leftovers"
 
@@ -533,10 +572,17 @@ if [[ "${CLEAN}" == "yes" ]]; then
     /usr/local/Cellar \
     /usr/local/Caskroom \
     /usr/local/opt \
+    /usr/local/bin/brew \
     /usr/local/var/homebrew \
     /var/homebrew \
     /var/log/homebrew \
     /var/run/homebrew
+
+  echo "[+] Removing application bundles recorded in manifest (if any)"
+  APP_BUNDLES="$(/usr/bin/grep '^/Applications/[^/]*\.app' "${MANIFEST}" | /usr/bin/awk -F'/' '{print "/"$2"/"$3}' | /usr/bin/sort -u || true)"
+  if [[ -n "${APP_BUNDLES}" ]]; then
+    echo "${APP_BUNDLES}" | /usr/bin/tr '\n' '\0' | /usr/bin/sudo /usr/bin/xargs -0 -r -n50 /bin/rm -rf --
+  fi
 
   /bin/rm -f "${HOME}/Library/LaunchAgents"/homebrew*.plist
   /usr/bin/sudo /bin/rm -f /Library/LaunchDaemons/homebrew*.plist
@@ -547,7 +593,9 @@ if [[ "${CLEAN}" == "yes" ]]; then
     "${HOME}/.Brewfile"
 
   echo "[+] Removing paths recorded in manifest"
-  /usr/bin/grep '^/' "${MANIFEST}" | /usr/bin/sort -u > "${CLEANLIST}"
+  /usr/bin/grep '^/' "${MANIFEST}" | /usr/bin/sort -u \
+    | /usr/bin/grep -Ev '^/Users/[^/]+/Library/Caches/Homebrew|^/Library/Caches/Homebrew' \
+    > "${CLEANLIST}"
   MANIFEST_DELETE_COUNT="$(/usr/bin/wc -l < "${CLEANLIST}" | /usr/bin/tr -d ' ')"
   echo "  Entries   : ${MANIFEST_DELETE_COUNT}"
 
@@ -561,6 +609,18 @@ if [[ "${CLEAN}" == "yes" ]]; then
 
   if [[ -d "/usr/local/Caskroom" ]]; then
     /usr/bin/sudo /bin/rm -rf /usr/local/Caskroom
+  fi
+
+  if [[ "${#CACHE_STASHED[@]:-0}" -gt 0 ]]; then
+    echo "[+] Restoring stashed caches"
+    for entry in "${CACHE_STASHED[@]}"; do
+      orig="${entry%%:::*}"
+      stash="${entry##*:::}"
+      if [[ -d "${stash}" ]]; then
+        /usr/bin/sudo /bin/rm -rf "${orig}" 2>/dev/null || true
+        /usr/bin/sudo /bin/mv "${stash}" "${orig}" 2>/dev/null || /bin/mv "${stash}" "${orig}" 2>/dev/null || true
+      fi
+    done
   fi
 
   echo "[+] Clean complete — system returned to pre-Homebrew state"
@@ -581,6 +641,13 @@ if [[ "${MODE}" == "restore" ]]; then
   else
     echo "  APPLYING RESTORE"
 
+    # Remove any existing application bundles referenced in the manifest to ensure clean replacement
+    APP_BUNDLES="$(/usr/bin/grep '^/Applications/[^/]*\.app' "${MANIFEST}" | /usr/bin/awk -F'/' '{print "/"$2"/"$3}' | /usr/bin/sort -u || true)"
+    if [[ -n "${APP_BUNDLES}" ]]; then
+      echo "  Removing existing application bundles before restore"
+      echo "${APP_BUNDLES}" | /usr/bin/tr '\n' '\0' | /usr/bin/sudo /usr/bin/xargs -0 -r -n50 /bin/rm -rf --
+    fi
+
     echo "  Extracting archive (this may take several minutes)..."
     TAR_RC=0
     /usr/bin/sudo /usr/bin/tar \
@@ -598,7 +665,7 @@ if [[ "${MODE}" == "restore" ]]; then
       echo "WARN: tar reported non-fatal issues (exit 1); continuing" >&2
     fi
 
-    /usr/bin/sudo /usr/sbin/chown -R "$(/usr/bin/whoami)":admin "${BREW_PREFIX:-/usr/local}"
+    /usr/bin/sudo /usr/sbin/chown -R "$(/usr/bin/whoami)":admin "${BREW_PREFIX:-/usr/local}" 2>/dev/null || true
 
     echo "  Restore complete"
   fi
